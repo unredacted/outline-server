@@ -679,8 +679,8 @@ export class ShadowsocksManagerService {
         return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));
       }
       
-      // Set content type for YAML response
-      res.setHeader('Content-Type', 'text/yaml');
+      // Send YAML response with proper content type
+      // Using restify's built-in content type handling
       res.send(HttpSuccess.OK, yamlConfig);
       next();
     } catch (error) {
