@@ -680,8 +680,7 @@ export class ShadowsocksManagerService {
       }
       
       // Set content type for YAML response
-      const response = res as restify.Response & { contentType: (type: string) => void };
-      response.contentType('text/yaml');
+      res.setHeader('Content-Type', 'text/yaml');
       res.send(HttpSuccess.OK, yamlConfig);
       next();
     } catch (error) {
