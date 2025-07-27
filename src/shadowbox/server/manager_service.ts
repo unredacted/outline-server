@@ -177,10 +177,6 @@ export function bindService(
     `${apiPrefix}/access-keys/:id/data-limit`,
     service.removeAccessKeyDataLimit.bind(service)
   );
-  apiServer.get(
-    `${apiPrefix}/access-keys/:id/dynamic-config`,
-    service.getDynamicAccessKeyConfig.bind(service)
-  );
 
   apiServer.get(`${apiPrefix}/metrics/transfer`, service.getDataUsage.bind(service));
   apiServer.get(`${apiPrefix}/metrics/enabled`, service.getShareMetrics.bind(service));
@@ -431,8 +427,34 @@ export class ShadowsocksManagerService {
       logging.debug(`getAccessKey request ${JSON.stringify(req.params)}`);
       const accessKeyId = validateAccessKeyId(req.params.id);
       const accessKey = this.accessKeys.getAccessKey(accessKeyId);
+      
+      // Check if this is a WebSocket-enabled key
+      if (accessKey.websocket?.enabled) {
+        // Generate and return YAML for WebSocket keys
+        const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
+          generateDynamicAccessKeyYaml?: (proxyParams: {encryptionMethod: string; password: string}, websocket?: WebSocketConfig) => string | null;
+        };
+        const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKey.proxyParams, accessKey.websocket);
+        
+        if (yamlConfig) {
+          // Return raw YAML for WebSocket keys
+          const nodeResponse = res as unknown as {
+            setHeader: (name: string, value: string) => void;
+            statusCode: number;
+            write: (data: string) => void;
+            end: () => void;
+          };
+          
+          nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+          nodeResponse.statusCode = HttpSuccess.OK;
+          nodeResponse.write(yamlConfig);
+          nodeResponse.end();
+          return;
+        }
+      }
+      
+      // Return JSON for traditional keys
       const accessKeyJson = accessKeyToApiJson(accessKey);
-
       logging.debug(`getAccessKey response ${JSON.stringify(accessKeyJson)}`);
       res.send(HttpSuccess.OK, accessKeyJson);
       return next();
@@ -654,56 +676,6 @@ export class ShadowsocksManagerService {
     }
   }
 
-  // Returns the dynamic access key configuration YAML for WebSocket transport
-  getDynamicAccessKeyConfig(req: RequestType, res: ResponseType, next: restify.Next): void {
-    try {
-      logging.debug(`getDynamicAccessKeyConfig request ${JSON.stringify(req.params)}`);
-      const accessKeyId = validateAccessKeyId(req.params.id);
-      
-      // Verify the access key exists
-      const accessKey = this.accessKeys.getAccessKey(accessKeyId);
-      
-      // Check if WebSocket is enabled for this key
-      if (!accessKey.websocket?.enabled) {
-        return next(new restifyErrors.NotImplementedError('WebSocket not configured for this access key'));
-      }
-      
-      // Generate the dynamic config YAML
-      // Type assertion for the extended server interface with WebSocket support
-      const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
-        generateDynamicAccessKeyYaml?: (proxyParams: {encryptionMethod: string; password: string}, websocket?: WebSocketConfig) => string | null;
-      };
-      const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKey.proxyParams, accessKey.websocket);
-      
-      if (!yamlConfig) {
-        return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));
-      }
-      
-      // Send raw YAML response without JSON encoding
-      // We need to bypass Restify's JSON serialization for this endpoint
-      // Cast to access underlying Node.js response methods
-      const nodeResponse = res as unknown as {
-        setHeader: (name: string, value: string) => void;
-        statusCode: number;
-        write: (data: string) => void;
-        end: () => void;
-      };
-      
-      nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      nodeResponse.statusCode = HttpSuccess.OK;
-      // Write raw response to avoid JSON encoding
-      nodeResponse.write(yamlConfig);
-      nodeResponse.end();
-      // Don't call next() after ending the response
-      return;
-    } catch (error) {
-      logging.error(error);
-      if (error instanceof errors.AccessKeyNotFound) {
-        return next(new restifyErrors.NotFoundError(error.message));
-      }
-      return next(new restifyErrors.InternalServerError());
-    }
-  }
 
   async setDefaultDataLimit(req: RequestType, res: ResponseType, next: restify.Next) {
     try {
