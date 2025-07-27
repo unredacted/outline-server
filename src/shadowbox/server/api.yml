@@ -278,6 +278,8 @@ paths:
                   type: integer
                 limit:
                   $ref: "#/components/schemas/DataLimit"
+                websocket:
+                  $ref: "#/components/schemas/WebSocketConfig"
             examples:
               'No params specified':
                 value: '{"method":"aes-192-gcm"}'
@@ -349,6 +351,8 @@ paths:
                   type: integer
                 limit:
                   $ref: "#/components/schemas/DataLimit"
+                websocket:
+                  $ref: "#/components/schemas/WebSocketConfig"
             examples:
               '0':
                 value: '{"method":"aes-192-gcm","name":"First","password":"8iu8V8EeoFVpwQvQeS9wiD","port": 12345,"limit":{"bytes":10000}}'
@@ -504,6 +508,48 @@ paths:
           description: Access key limit deleted successfully.
         '404':
           description: Access key inexistent
+  /access-keys/{id}/dynamic-config:
+    get:
+      description: Returns the dynamic access key configuration YAML for WebSocket transport
+      tags:
+        - Access Key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the access key
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dynamic access key configuration
+          content:
+            text/yaml:
+              schema:
+                type: string
+              examples:
+                '0':
+                  value: |
+                    transport:
+                      $type: tcpudp
+                      tcp:
+                        $type: shadowsocks
+                        endpoint:
+                          $type: websocket
+                          url: wss://example.com/tcp
+                        cipher: chacha20-ietf-poly1305
+                        secret: XxXxXx
+                      udp:
+                        $type: shadowsocks
+                        endpoint:
+                          $type: websocket
+                          url: wss://example.com/udp
+                        cipher: chacha20-ietf-poly1305
+                        secret: XxXxXx
+        '404':
+          description: Access key not found or WebSocket not enabled
+        '501':
+          description: WebSocket support not configured for this access key
   /metrics/transfer:
     get:
       description: Returns the data transferred per access key
@@ -617,6 +663,25 @@ components:
           type: integer
           minimum: 0
 
+    WebSocketConfig:
+      properties:
+        enabled:
+          type: boolean
+          description: Whether WebSocket transport is enabled for this access key
+        tcpPath:
+          type: string
+          description: Path for TCP over WebSocket (e.g., "/tcp-path")
+        udpPath:
+          type: string
+          description: Path for UDP over WebSocket (e.g., "/udp-path")
+        domain:
+          type: string
+          description: WebSocket server domain (e.g., "example.com")
+        tls:
+          type: boolean
+          description: Whether to use TLS for WebSocket connections (wss:// vs ws://)
+          default: true
+
     AccessKey:
       required:
         - id
@@ -633,3 +698,8 @@ components:
           type: string
         accessUrl:
           type: string
+        websocket:
+          $ref: "#/components/schemas/WebSocketConfig"
+        dynamicAccessKeyUrl:
+          type: string
+          description: URL to dynamic access key configuration for WebSocket transport

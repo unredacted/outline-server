@@ -20,7 +20,7 @@ import {makeConfig, SIP002_URI} from 'outline-shadowsocksconfig';
 
 import {JsonConfig} from '../infrastructure/json_config';
 import * as logging from '../infrastructure/logging';
-import {AccessKey, AccessKeyRepository, DataLimit} from '../model/access_key';
+import {AccessKey, AccessKeyRepository, DataLimit, WebSocketConfig} from '../model/access_key';
 import * as errors from '../model/errors';
 import * as version from './version';
 
@@ -40,11 +40,13 @@ interface AccessKeyJson {
   method: string;
   dataLimit: DataLimit;
   accessUrl: string;
+  websocket?: WebSocketConfig;
+  dynamicAccessKeyUrl?: string;
 }
 
 // Creates a AccessKey response.
 function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
-  return {
+  const result: AccessKeyJson = {
     id: accessKey.id,
     name: accessKey.name,
     password: accessKey.proxyParams.password,
@@ -61,6 +63,17 @@ function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
       })
     ),
   };
+  
+  if (accessKey.websocket) {
+    result.websocket = accessKey.websocket;
+    // Generate dynamic access key URL if WebSocket is enabled
+    if (accessKey.websocket.enabled && accessKey.websocket.domain) {
+      // This URL would typically point to where the dynamic access key YAML is hosted
+      result.dynamicAccessKeyUrl = `https://${accessKey.websocket.domain}/access-keys/${accessKey.id}.yaml`;
+    }
+  }
+  
+  return result;
 }
 
 // Type to reflect that we receive untyped JSON request parameters.
@@ -164,6 +177,10 @@ export function bindService(
     `${apiPrefix}/access-keys/:id/data-limit`,
     service.removeAccessKeyDataLimit.bind(service)
   );
+  apiServer.get(
+    `${apiPrefix}/access-keys/:id/dynamic-config`,
+    service.getDynamicAccessKeyConfig.bind(service)
+  );
 
   apiServer.get(`${apiPrefix}/metrics/transfer`, service.getDataUsage.bind(service));
   apiServer.get(`${apiPrefix}/metrics/enabled`, service.getShareMetrics.bind(service));
@@ -261,6 +278,63 @@ function validateNumberParam(param: unknown, paramName: string): number | undefi
     );
   }
   return param;
+}
+
+function validateWebSocketConfig(websocket: unknown): WebSocketConfig | undefined {
+  if (typeof websocket === 'undefined') {
+    return undefined;
+  }
+
+  if (typeof websocket !== 'object' || websocket === null) {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'WebSocket configuration must be an object'
+    );
+  }
+
+  const config = websocket as any;
+  
+  // Validate enabled field
+  if ('enabled' in config && typeof config.enabled !== 'boolean') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'websocket.enabled must be a boolean'
+    );
+  }
+
+  // Validate tcpPath
+  if ('tcpPath' in config && typeof config.tcpPath !== 'string') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'websocket.tcpPath must be a string'
+    );
+  }
+
+  // Validate udpPath
+  if ('udpPath' in config && typeof config.udpPath !== 'string') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'websocket.udpPath must be a string'
+    );
+  }
+
+  // Validate domain
+  if ('domain' in config && typeof config.domain !== 'string') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'websocket.domain must be a string'
+    );
+  }
+
+  // Validate tls
+  if ('tls' in config && typeof config.tls !== 'boolean') {
+    throw new restifyErrors.InvalidArgumentError(
+      {statusCode: 400},
+      'websocket.tls must be a boolean'
+    );
+  }
+
+  return config as WebSocketConfig;
 }
 
 // The ShadowsocksManagerService manages the access keys that can use the server
@@ -390,6 +464,7 @@ export class ShadowsocksManagerService {
       const dataLimit = validateDataLimit(req.params.limit);
       const password = validateStringParam(req.params.password, 'password');
       const portNumber = validateNumberParam(req.params.port, 'port');
+      const websocket = validateWebSocketConfig(req.params.websocket);
 
       const accessKeyJson = accessKeyToApiJson(
         await this.accessKeys.createNewAccessKey({
@@ -399,6 +474,7 @@ export class ShadowsocksManagerService {
           dataLimit,
           password,
           portNumber,
+          websocket,
         })
       );
       return accessKeyJson;
@@ -575,6 +651,39 @@ export class ShadowsocksManagerService {
         return next(new restifyErrors.NotFoundError(error.message));
       }
       return next(error);
+    }
+  }
+
+  // Returns the dynamic access key configuration YAML for WebSocket transport
+  getDynamicAccessKeyConfig(req: RequestType, res: ResponseType, next: restify.Next): void {
+    try {
+      logging.debug(`getDynamicAccessKeyConfig request ${JSON.stringify(req.params)}`);
+      const accessKeyId = validateAccessKeyId(req.params.id);
+      
+      // Verify the access key exists
+      const accessKey = this.accessKeys.getAccessKey(accessKeyId);
+      
+      // Check if WebSocket is enabled for this key
+      if (!accessKey.websocket?.enabled) {
+        return next(new restifyErrors.NotImplementedError('WebSocket not configured for this access key'));
+      }
+      
+      // Generate the dynamic config YAML
+      const yamlConfig = (this.shadowsocksServer as any).generateDynamicAccessKeyYaml?.(accessKeyId);
+      
+      if (!yamlConfig) {
+        return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));
+      }
+      
+      (res as any).contentType('text/yaml');
+      res.send(HttpSuccess.OK, yamlConfig);
+      next();
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.AccessKeyNotFound) {
+        return next(new restifyErrors.NotFoundError(error.message));
+      }
+      return next(new restifyErrors.InternalServerError());
     }
   }
 

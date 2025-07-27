@@ -21,6 +21,17 @@ import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
 import {ShadowsocksAccessKey, ShadowsocksServer} from '../model/shadowsocks_server';
 
+// Extended interface for access keys with WebSocket configuration
+export interface ShadowsocksAccessKeyWithWebSocket extends ShadowsocksAccessKey {
+  websocket?: {
+    enabled: boolean;
+    tcpPath?: string;
+    udpPath?: string;
+    domain?: string;
+    tls?: boolean;
+  };
+}
+
 // Runs outline-ss-server.
 export class OutlineShadowsocksServer implements ShadowsocksServer {
   private ssProcess: child_process.ChildProcess;
@@ -28,6 +39,12 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   private ipAsnFilename?: string;
   private isAsnMetricsEnabled = false;
   private isReplayProtectionEnabled = false;
+  private webSocketConfig?: {
+    enabled: boolean;
+    webServerPort: number;
+    // Store the full access keys with WebSocket config for generating dynamic keys
+    accessKeys?: ShadowsocksAccessKeyWithWebSocket[];
+  };
 
   /**
    * @param binaryFilename The location for the outline-ss-server binary.
@@ -65,6 +82,18 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     return this;
   }
 
+  /**
+   * Configures WebSocket support for the Shadowsocks server.
+   * @param webServerPort The port for the internal WebSocket server to listen on.
+   */
+  configureWebSocket(webServerPort: number): OutlineShadowsocksServer {
+    this.webSocketConfig = {
+      enabled: true,
+      webServerPort,
+    };
+    return this;
+  }
+
   // Promise is resolved after the outline-ss-config config is updated and the SIGHUP sent.
   // Keys may not be active yet.
   // TODO(fortuna): Make promise resolve when keys are ready.
@@ -81,27 +110,176 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
   private writeConfigFile(keys: ShadowsocksAccessKey[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      const keysJson = {keys: [] as ShadowsocksAccessKey[]};
-      for (const key of keys) {
-        if (!isAeadCipher(key.cipher)) {
-          logging.error(
-            `Cipher ${key.cipher} for access key ${key.id} is not supported: use an AEAD cipher instead.`
-          );
-          continue;
+      // Check if any key has WebSocket configuration
+      const extendedKeys = keys as ShadowsocksAccessKeyWithWebSocket[];
+      const hasWebSocketKeys = extendedKeys.some(key => key.websocket?.enabled);
+      
+      let config: any;
+      
+      if (hasWebSocketKeys && this.webSocketConfig?.enabled) {
+        // Use new format with WebSocket support
+        config = this.generateWebSocketConfig(extendedKeys);
+      } else {
+        // Use legacy format for backward compatibility
+        const keysJson = {keys: [] as ShadowsocksAccessKey[]};
+        for (const key of keys) {
+          if (!isAeadCipher(key.cipher)) {
+            logging.error(
+              `Cipher ${key.cipher} for access key ${key.id} is not supported: use an AEAD cipher instead.`
+            );
+            continue;
+          }
+          keysJson.keys.push(key);
         }
-
-        keysJson.keys.push(key);
+        config = keysJson;
       }
 
       mkdirp.sync(path.dirname(this.configFilename));
 
       try {
-        file.atomicWriteFileSync(this.configFilename, jsyaml.safeDump(keysJson, {sortKeys: true}));
+        file.atomicWriteFileSync(this.configFilename, jsyaml.safeDump(config, {sortKeys: true}));
+        // Store the keys for dynamic access key generation if WebSocket is enabled
+        if (this.webSocketConfig) {
+          this.webSocketConfig.accessKeys = extendedKeys;
+        }
         resolve();
       } catch (error) {
         reject(error);
       }
     });
+  }
+
+  private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithWebSocket[]): any {
+    // Group keys by their listener configuration
+    const serviceGroups = new Map<string, ShadowsocksAccessKeyWithWebSocket[]>();
+    
+    // Process each key
+    for (const key of keys) {
+      if (!isAeadCipher(key.cipher)) {
+        logging.error(
+          `Cipher ${key.cipher} for access key ${key.id} is not supported: use an AEAD cipher instead.`
+        );
+        continue;
+      }
+
+      if (key.websocket?.enabled) {
+        // Group WebSocket-enabled keys by their paths
+        const groupKey = `ws:${key.websocket.tcpPath || '/tcp'}:${key.websocket.udpPath || '/udp'}`;
+        if (!serviceGroups.has(groupKey)) {
+          serviceGroups.set(groupKey, []);
+        }
+        serviceGroups.get(groupKey)!.push(key);
+      } else {
+        // Group traditional keys by port
+        const groupKey = `port:${key.port}`;
+        if (!serviceGroups.has(groupKey)) {
+          serviceGroups.set(groupKey, []);
+        }
+        serviceGroups.get(groupKey)!.push(key);
+      }
+    }
+
+    // Build the configuration
+    const config: any = {
+      services: []
+    };
+
+    // Add web server configuration if any WebSocket keys exist
+    if (Array.from(serviceGroups.keys()).some(k => k.startsWith('ws:'))) {
+      config.web = {
+        servers: [{
+          id: 'outline-ws-server',
+          listen: [`127.0.0.1:${this.webSocketConfig!.webServerPort}`]
+        }]
+      };
+    }
+
+    // Create services
+    for (const [groupKey, groupKeys] of serviceGroups) {
+      const service: any = {
+        listeners: [],
+        keys: groupKeys.map(k => ({
+          id: k.id,
+          cipher: k.cipher,
+          secret: k.secret
+        }))
+      };
+
+      if (groupKey.startsWith('ws:')) {
+        // WebSocket listeners
+        const [, tcpPath, udpPath] = groupKey.split(':');
+        service.listeners.push({
+          type: 'websocket-stream',
+          web_server: 'outline-ws-server',
+          path: tcpPath
+        });
+        service.listeners.push({
+          type: 'websocket-packet',
+          web_server: 'outline-ws-server',
+          path: udpPath
+        });
+      } else if (groupKey.startsWith('port:')) {
+        // Traditional TCP/UDP listeners
+        const port = groupKey.split(':')[1];
+        service.listeners.push({
+          type: 'tcp',
+          address: `[::]:${port}`
+        });
+        service.listeners.push({
+          type: 'udp',
+          address: `[::]:${port}`
+        });
+      }
+
+      config.services.push(service);
+    }
+
+    return config;
+  }
+
+  /**
+   * Generates dynamic access key YAML content for a specific access key with WebSocket support.
+   * @param accessKeyId The ID of the access key
+   * @returns The YAML content as a string, or null if the key doesn't exist or doesn't have WebSocket enabled
+   */
+  generateDynamicAccessKeyYaml(accessKeyId: string): string | null {
+    if (!this.webSocketConfig?.accessKeys) {
+      return null;
+    }
+
+    const accessKey = this.webSocketConfig.accessKeys.find(key => key.id === accessKeyId);
+    if (!accessKey || !accessKey.websocket?.enabled || !accessKey.websocket.domain) {
+      return null;
+    }
+
+    const ws = accessKey.websocket;
+    const protocol = ws.tls !== false ? 'wss' : 'ws';
+    
+    const config = {
+      transport: {
+        $type: 'tcpudp',
+        tcp: {
+          $type: 'shadowsocks',
+          endpoint: {
+            $type: 'websocket',
+            url: `${protocol}://${ws.domain}${ws.tcpPath || '/tcp'}`
+          },
+          cipher: accessKey.cipher,
+          secret: accessKey.secret
+        },
+        udp: {
+          $type: 'shadowsocks',
+          endpoint: {
+            $type: 'websocket',
+            url: `${protocol}://${ws.domain}${ws.udpPath || '/udp'}`
+          },
+          cipher: accessKey.cipher,
+          secret: accessKey.secret
+        }
+      }
+    };
+
+    return jsyaml.safeDump(config, {sortKeys: true});
   }
 
   private start() {

@@ -26,6 +26,7 @@ import {
   AccessKeyRepository,
   DataLimit,
   ProxyParams,
+  WebSocketConfig,
 } from '../model/access_key';
 import * as errors from '../model/errors';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
@@ -39,6 +40,7 @@ interface AccessKeyStorageJson {
   port: number;
   encryptionMethod?: string;
   dataLimit?: DataLimit;
+  websocket?: WebSocketConfig;
 }
 
 // The configuration file format as json.
@@ -55,7 +57,8 @@ class ServerAccessKey implements AccessKey {
     readonly id: AccessKeyId,
     public name: string,
     readonly proxyParams: ProxyParams,
-    public dataLimit?: DataLimit
+    public dataLimit?: DataLimit,
+    public websocket?: WebSocketConfig
   ) {}
 }
 
@@ -76,7 +79,8 @@ function makeAccessKey(hostname: string, accessKeyJson: AccessKeyStorageJson): A
     accessKeyJson.id,
     accessKeyJson.name,
     proxyParams,
-    accessKeyJson.dataLimit
+    accessKeyJson.dataLimit,
+    accessKeyJson.websocket
   );
 }
 
@@ -88,6 +92,7 @@ function accessKeyToStorageJson(accessKey: AccessKey): AccessKeyStorageJson {
     port: accessKey.proxyParams.portNumber,
     encryptionMethod: accessKey.proxyParams.encryptionMethod,
     dataLimit: accessKey.dataLimit,
+    websocket: accessKey.websocket,
   };
 }
 
@@ -234,7 +239,8 @@ export class ServerAccessKeyRepository implements AccessKeyRepository {
     };
     const name = params?.name ?? '';
     const dataLimit = params?.dataLimit;
-    const accessKey = new ServerAccessKey(id, name, proxyParams, dataLimit);
+    const websocket = params?.websocket;
+    const accessKey = new ServerAccessKey(id, name, proxyParams, dataLimit, websocket);
     this.accessKeys.push(accessKey);
     this.saveAccessKeys();
     await this.updateServer();
@@ -325,12 +331,22 @@ export class ServerAccessKeyRepository implements AccessKeyRepository {
     const serverAccessKeys = this.accessKeys
       .filter((key) => !key.reachedDataLimit)
       .map((key) => {
-        return {
+        const baseKey = {
           id: key.id,
           port: key.proxyParams.portNumber,
           cipher: key.proxyParams.encryptionMethod,
           secret: key.proxyParams.password,
         };
+        
+        // Include WebSocket configuration if present
+        if (key.websocket) {
+          return {
+            ...baseKey,
+            websocket: key.websocket
+          };
+        }
+        
+        return baseKey;
       });
     return this.shadowsocksServer.update(serverAccessKeys);
   }

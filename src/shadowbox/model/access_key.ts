@@ -14,6 +14,20 @@
 
 export type AccessKeyId = string;
 
+// WebSocket configuration for Shadowsocks over WebSocket transport
+export interface WebSocketConfig {
+  // Whether WebSocket transport is enabled
+  readonly enabled: boolean;
+  // Path for TCP over WebSocket
+  readonly tcpPath?: string;
+  // Path for UDP over WebSocket
+  readonly udpPath?: string;
+  // WebSocket server domain
+  readonly domain?: string;
+  // Whether to use TLS for WebSocket connections
+  readonly tls?: boolean;
+}
+
 // Parameters needed to access a Shadowsocks proxy.
 export interface ProxyParams {
   // Hostname of the proxy
@@ -43,6 +57,8 @@ export interface AccessKey {
   readonly reachedDataLimit: boolean;
   // The key's current data limit.  If it exists, it overrides the server default data limit.
   readonly dataLimit?: DataLimit;
+  // WebSocket configuration for this access key
+  readonly websocket?: WebSocketConfig;
 }
 
 export interface AccessKeyCreateParams {
@@ -58,6 +74,8 @@ export interface AccessKeyCreateParams {
   readonly dataLimit?: DataLimit;
   // The port number to use for the access key.
   readonly portNumber?: number;
+  // WebSocket configuration for the access key.
+  readonly websocket?: WebSocketConfig;
 }
 
 export interface AccessKeyRepository {

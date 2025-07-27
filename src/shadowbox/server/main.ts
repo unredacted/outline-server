@@ -162,6 +162,11 @@ async function main() {
   if (fs.existsSync(MMDB_LOCATION_ASN)) {
     shadowsocksServer.configureAsnMetrics(MMDB_LOCATION_ASN);
   }
+  
+  // Configure WebSocket support if enabled
+  // TODO: Make this configurable via environment variable or server config
+  const webSocketPort = 8080; // Default internal WebSocket server port
+  shadowsocksServer.configureWebSocket(webSocketPort);
 
   const isReplayProtectionEnabled = createRolloutTracker(serverConfig).isRolloutEnabled(
     'replay-protection',
