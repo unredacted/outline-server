@@ -681,11 +681,19 @@ export class ShadowsocksManagerService {
       
       // Send raw YAML response without JSON encoding
       // We need to bypass Restify's JSON serialization for this endpoint
-      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-      res.statusCode = HttpSuccess.OK;
+      // Cast to access underlying Node.js response methods
+      const nodeResponse = res as unknown as {
+        setHeader: (name: string, value: string) => void;
+        statusCode: number;
+        write: (data: string) => void;
+        end: () => void;
+      };
+      
+      nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+      nodeResponse.statusCode = HttpSuccess.OK;
       // Write raw response to avoid JSON encoding
-      res.write(yamlConfig);
-      res.end();
+      nodeResponse.write(yamlConfig);
+      nodeResponse.end();
       // Don't call next() after ending the response
       return;
     } catch (error) {
