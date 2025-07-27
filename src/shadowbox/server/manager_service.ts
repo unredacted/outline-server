@@ -679,10 +679,15 @@ export class ShadowsocksManagerService {
         return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));
       }
       
-      // Send YAML response with proper content type
-      // Using restify's built-in content type handling
-      res.send(HttpSuccess.OK, yamlConfig);
-      next();
+      // Send raw YAML response without JSON encoding
+      // We need to bypass Restify's JSON serialization for this endpoint
+      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+      res.statusCode = HttpSuccess.OK;
+      // Write raw response to avoid JSON encoding
+      res.write(yamlConfig);
+      res.end();
+      // Don't call next() after ending the response
+      return;
     } catch (error) {
       logging.error(error);
       if (error instanceof errors.AccessKeyNotFound) {
