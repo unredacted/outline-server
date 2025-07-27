@@ -38,15 +38,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18.x'
-          
-      - name: Install task
-        run: |
-          sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
-          
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -77,52 +68,55 @@ jobs:
             type=raw,value=wss-latest,enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
             type=raw,value=wss-{{branch}},enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
       
-      - name: Build application for x86_64
-        working-directory: ./src/shadowbox
-        env:
-          OUTPUT_BASE: ./build
-        run: |
-          npm ci
-          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=x86_64 IMAGE_NAME=localhost/outline/shadowbox:x86_64
-          
-      - name: Build application for arm64
-        working-directory: ./src/shadowbox
-        env:
-          OUTPUT_BASE: ./build
-        run: |
-          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=arm64 IMAGE_NAME=localhost/outline/shadowbox:arm64
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
       
-      - name: Create multi-arch image and push
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install Task
+        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+      
+      - name: Build Shadowbox for amd64
+        env:
+          OUTPUT_BASE: ${{ github.workspace }}/build
+          DOCKER_CONTENT_TRUST: "0"  # Disable content trust for CI builds
+        run: |
+          # Build from root directory to have access to all taskfiles
+          task shadowbox:docker:build TARGET_ARCH=x86_64 IMAGE_NAME=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-${{ github.sha }} IMAGE_VERSION=${{ github.sha }}
+      
+      - name: Build Shadowbox for arm64  
+        env:
+          OUTPUT_BASE: ${{ github.workspace }}/build
+          DOCKER_CONTENT_TRUST: "0"  # Disable content trust for CI builds
+        run: |
+          # Build from root directory to have access to all taskfiles
+          task shadowbox:docker:build TARGET_ARCH=arm64 IMAGE_NAME=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-${{ github.sha }} IMAGE_VERSION=${{ github.sha }}
+      
+      - name: Push images
         if: github.event_name != 'pull_request'
         run: |
-          # Tag images for each architecture
-          docker tag localhost/outline/shadowbox:x86_64 ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
-          docker tag localhost/outline/shadowbox:arm64 ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
-          
-          # Push architecture-specific images
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
-          
-          # Create and push manifests for each tag
-          TAGS="${{ steps.meta.outputs.tags }}"
-          IFS=$'\n'
-          for TAG in $TAGS; do
-            echo "Creating manifest for $TAG"
-            docker manifest create $TAG \
-              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp \
-              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
-            
-            docker manifest annotate $TAG \
-              ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp \
-              --arch amd64 --os linux
-              
-            docker manifest annotate $TAG \
-              ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp \
-              --arch arm64 --os linux
-              
-            docker manifest push $TAG
+          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-${{ github.sha }}
+      
+      - name: Create and push manifest
+        if: github.event_name != 'pull_request'
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        run: |
+          # Parse tags and create/push manifest for each
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            echo "Creating manifest for ${tag}"
+            docker manifest create ${tag} \
+              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-${{ github.sha }} \
+              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-${{ github.sha }}
+            docker manifest push ${tag}
           done
-          
-          # Clean up temporary tags
-          docker manifest rm ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp || true
-          docker manifest rm ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp || true
