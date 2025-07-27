@@ -96,6 +96,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
+      - name: Update Go dependencies
+        run: |
+          go mod download
+          go mod tidy
+      
       - name: Install Task
         run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
       
