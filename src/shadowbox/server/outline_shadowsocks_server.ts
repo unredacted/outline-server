@@ -32,6 +32,43 @@ export interface ShadowsocksAccessKeyWithWebSocket extends ShadowsocksAccessKey 
   };
 }
 
+// Configuration types for outline-ss-server
+interface LegacyConfig {
+  keys: ShadowsocksAccessKey[];
+}
+
+interface WebSocketListener {
+  type: 'websocket-stream' | 'websocket-packet';
+  web_server: string;
+  path: string;
+}
+
+interface TcpUdpListener {
+  type: 'tcp' | 'udp';
+  address: string;
+}
+
+interface ServiceConfig {
+  listeners: Array<WebSocketListener | TcpUdpListener>;
+  keys: Array<{
+    id: string;
+    cipher: string;
+    secret: string;
+  }>;
+}
+
+interface WebSocketConfig {
+  web?: {
+    servers: Array<{
+      id: string;
+      listen: string[];
+    }>;
+  };
+  services: ServiceConfig[];
+}
+
+type ServerConfig = LegacyConfig | WebSocketConfig;
+
 // Runs outline-ss-server.
 export class OutlineShadowsocksServer implements ShadowsocksServer {
   private ssProcess: child_process.ChildProcess;
@@ -114,7 +151,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       const extendedKeys = keys as ShadowsocksAccessKeyWithWebSocket[];
       const hasWebSocketKeys = extendedKeys.some(key => key.websocket?.enabled);
       
-      let config: any;
+      let config: ServerConfig;
       
       if (hasWebSocketKeys && this.webSocketConfig?.enabled) {
         // Use new format with WebSocket support
@@ -149,7 +186,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     });
   }
 
-  private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithWebSocket[]): any {
+  private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithWebSocket[]): WebSocketConfig {
     // Group keys by their listener configuration
     const serviceGroups = new Map<string, ShadowsocksAccessKeyWithWebSocket[]>();
     
@@ -180,7 +217,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     }
 
     // Build the configuration
-    const config: any = {
+    const config: WebSocketConfig = {
       services: []
     };
 
@@ -196,7 +233,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     // Create services
     for (const [groupKey, groupKeys] of serviceGroups) {
-      const service: any = {
+      const service: ServiceConfig = {
         listeners: [],
         keys: groupKeys.map(k => ({
           id: k.id,

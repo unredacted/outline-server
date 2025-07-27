@@ -292,7 +292,7 @@ function validateWebSocketConfig(websocket: unknown): WebSocketConfig | undefine
     );
   }
 
-  const config = websocket as any;
+  const config = websocket as Record<string, unknown>;
   
   // Validate enabled field
   if ('enabled' in config && typeof config.enabled !== 'boolean') {
@@ -334,7 +334,7 @@ function validateWebSocketConfig(websocket: unknown): WebSocketConfig | undefine
     );
   }
 
-  return config as WebSocketConfig;
+  return config as unknown as WebSocketConfig;
 }
 
 // The ShadowsocksManagerService manages the access keys that can use the server
@@ -669,13 +669,19 @@ export class ShadowsocksManagerService {
       }
       
       // Generate the dynamic config YAML
-      const yamlConfig = (this.shadowsocksServer as any).generateDynamicAccessKeyYaml?.(accessKeyId);
+      // Type assertion for the extended server interface
+      const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
+        generateDynamicAccessKeyYaml?: (accessKeyId: string) => string | null;
+      };
+      const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKeyId);
       
       if (!yamlConfig) {
         return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));
       }
       
-      (res as any).contentType('text/yaml');
+      // Set content type for YAML response
+      const response = res as restify.Response & { contentType: (type: string) => void };
+      response.contentType('text/yaml');
       res.send(HttpSuccess.OK, yamlConfig);
       next();
     } catch (error) {
