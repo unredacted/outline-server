@@ -79,24 +79,25 @@ jobs:
       
       - name: Build application for x86_64
         working-directory: ./src/shadowbox
+        env:
+          OUTPUT_BASE: ./build
         run: |
           npm ci
-          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=x86_64
+          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=x86_64 IMAGE_NAME=localhost/outline/shadowbox:x86_64
           
       - name: Build application for arm64
         working-directory: ./src/shadowbox
+        env:
+          OUTPUT_BASE: ./build
         run: |
-          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=arm64
+          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=arm64 IMAGE_NAME=localhost/outline/shadowbox:arm64
       
       - name: Create multi-arch image and push
         if: github.event_name != 'pull_request'
         run: |
           # Tag images for each architecture
-          docker tag localhost/outline/shadowbox:latest ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
-          
-          # Since we built x86_64 last, we need to load the arm64 image
-          docker load -i ./src/shadowbox/build/arm64/shadowbox-arm64.tar || true
-          docker tag localhost/outline/shadowbox:latest ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
+          docker tag localhost/outline/shadowbox:x86_64 ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
+          docker tag localhost/outline/shadowbox:arm64 ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
           
           # Push architecture-specific images
           docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
