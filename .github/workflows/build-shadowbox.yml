@@ -28,12 +28,6 @@ jobs:
       contents: read
       packages: write
     
-    strategy:
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,6 +38,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          
+      - name: Install task
+        run: |
+          sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+          
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -74,96 +77,51 @@ jobs:
             type=raw,value=wss-latest,enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
             type=raw,value=wss-{{branch}},enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
       
-      - name: Determine target architecture
-        id: arch
-        run: |
-          if [[ "${{ matrix.platform }}" == "linux/amd64" ]]; then
-            echo "node_image=node@sha256:a0b787b0d53feacfa6d606fb555e0dbfebab30573277f1fe25148b05b66fa097" >> $GITHUB_OUTPUT
-            echo "target_arch=x86_64" >> $GITHUB_OUTPUT
-          else
-            echo "node_image=node@sha256:b4b7a1dd149c65ee6025956ac065a843b4409a62068bd2b0cbafbb30ca2fab3b" >> $GITHUB_OUTPUT
-            echo "target_arch=arm64" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Build application
+      - name: Build application for x86_64
         working-directory: ./src/shadowbox
         run: |
-          # Install Node.js
-          curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-          
-          # Install dependencies and build
           npm ci
-          npm run action:build -- \
-            --platform ${{ matrix.platform == 'linux/amd64' && 'linux' || 'linux' }}
-      
-      - name: Prepare Docker build context
+          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=x86_64
+          
+      - name: Build application for arm64
         working-directory: ./src/shadowbox
         run: |
-          # Create image root directory
-          IMAGE_ROOT="build/image_root"
-          rm -rf "${IMAGE_ROOT}"
-          mkdir -p "${IMAGE_ROOT}/opt/outline-server"
-          
-          # Copy built application
-          cp -R build/linux/${{ steps.arch.outputs.target_arch }}/* "${IMAGE_ROOT}/opt/outline-server/"
-          
-          # Copy scripts
-          cp -R scripts "${IMAGE_ROOT}/scripts"
-          cp -R docker/* "${IMAGE_ROOT}/"
+          task docker:build VERSION=${{ github.sha }} TARGET_ARCH=arm64
       
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/shadowbox/build/image_root
-          file: ./src/shadowbox/build/image_root/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            NODE_IMAGE=${{ steps.arch.outputs.node_image }}
-            VERSION=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          
-  create-manifest:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    permissions:
-      contents: read
-      packages: write
-      
-    steps:
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=ref,event=pr
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix={{branch}}-
-            type=raw,value={{branch}}-${{ github.event.inputs.tag_suffix }},enable=${{ github.event.inputs.tag_suffix != '' }}
-            type=raw,value=wss-latest,enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
-            type=raw,value=wss-{{branch}},enable=${{ startsWith(github.ref, 'refs/heads/wss-') }}
-      
-      - name: Create and push manifest
+      - name: Create multi-arch image and push
+        if: github.event_name != 'pull_request'
         run: |
+          # Tag images for each architecture
+          docker tag localhost/outline/shadowbox:latest ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
+          
+          # Since we built x86_64 last, we need to load the arm64 image
+          docker load -i ./src/shadowbox/build/arm64/shadowbox-arm64.tar || true
+          docker tag localhost/outline/shadowbox:latest ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
+          
+          # Push architecture-specific images
+          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp
+          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
+          
+          # Create and push manifests for each tag
           TAGS="${{ steps.meta.outputs.tags }}"
+          IFS=$'\n'
           for TAG in $TAGS; do
+            echo "Creating manifest for $TAG"
             docker manifest create $TAG \
-              $TAG-linux-amd64 \
-              $TAG-linux-arm64
+              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp \
+              --amend ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp
+            
+            docker manifest annotate $TAG \
+              ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp \
+              --arch amd64 --os linux
+              
+            docker manifest annotate $TAG \
+              ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp \
+              --arch arm64 --os linux
+              
             docker manifest push $TAG
           done
+          
+          # Clean up temporary tags
+          docker manifest rm ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:amd64-temp || true
+          docker manifest rm ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:arm64-temp || true
