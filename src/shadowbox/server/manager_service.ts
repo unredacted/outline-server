@@ -669,11 +669,11 @@ export class ShadowsocksManagerService {
       }
       
       // Generate the dynamic config YAML
-      // Type assertion for the extended server interface
+      // Type assertion for the extended server interface with WebSocket support
       const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
-        generateDynamicAccessKeyYaml?: (accessKeyId: string) => string | null;
+        generateDynamicAccessKeyYaml?: (proxyParams: {encryptionMethod: string; password: string}, websocket?: WebSocketConfig) => string | null;
       };
-      const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKeyId);
+      const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKey.proxyParams, accessKey.websocket);
       
       if (!yamlConfig) {
         return next(new restifyErrors.NotImplementedError('WebSocket configuration not available'));

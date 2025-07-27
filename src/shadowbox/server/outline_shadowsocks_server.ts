@@ -79,8 +79,6 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   private webSocketConfig?: {
     enabled: boolean;
     webServerPort: number;
-    // Store the full access keys with WebSocket config for generating dynamic keys
-    accessKeys?: ShadowsocksAccessKeyWithWebSocket[];
   };
 
   /**
@@ -175,10 +173,6 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
       try {
         file.atomicWriteFileSync(this.configFilename, jsyaml.safeDump(config, {sortKeys: true}));
-        // Store the keys for dynamic access key generation if WebSocket is enabled
-        if (this.webSocketConfig) {
-          this.webSocketConfig.accessKeys = extendedKeys;
-        }
         resolve();
       } catch (error) {
         reject(error);
@@ -276,21 +270,16 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
   /**
    * Generates dynamic access key YAML content for a specific access key with WebSocket support.
-   * @param accessKeyId The ID of the access key
-   * @returns The YAML content as a string, or null if the key doesn't exist or doesn't have WebSocket enabled
+   * @param proxyParams The proxy parameters containing cipher and password
+   * @param websocket The WebSocket configuration
+   * @returns The YAML content as a string, or null if the key doesn't have WebSocket enabled
    */
-  generateDynamicAccessKeyYaml(accessKeyId: string): string | null {
-    if (!this.webSocketConfig?.accessKeys) {
+  generateDynamicAccessKeyYaml(proxyParams: {encryptionMethod: string; password: string}, websocket?: {enabled: boolean; tcpPath?: string; udpPath?: string; domain?: string; tls?: boolean}): string | null {
+    if (!websocket?.enabled || !websocket.domain) {
       return null;
     }
 
-    const accessKey = this.webSocketConfig.accessKeys.find(key => key.id === accessKeyId);
-    if (!accessKey || !accessKey.websocket?.enabled || !accessKey.websocket.domain) {
-      return null;
-    }
-
-    const ws = accessKey.websocket;
-    const protocol = ws.tls !== false ? 'wss' : 'ws';
+    const protocol = websocket.tls !== false ? 'wss' : 'ws';
     
     const config = {
       transport: {
@@ -299,19 +288,19 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
           $type: 'shadowsocks',
           endpoint: {
             $type: 'websocket',
-            url: `${protocol}://${ws.domain}${ws.tcpPath || '/tcp'}`
+            url: `${protocol}://${websocket.domain}${websocket.tcpPath || '/tcp'}`
           },
-          cipher: accessKey.cipher,
-          secret: accessKey.secret
+          cipher: proxyParams.encryptionMethod,
+          secret: proxyParams.password
         },
         udp: {
           $type: 'shadowsocks',
           endpoint: {
             $type: 'websocket',
-            url: `${protocol}://${ws.domain}${ws.udpPath || '/udp'}`
+            url: `${protocol}://${websocket.domain}${websocket.udpPath || '/udp'}`
           },
-          cipher: accessKey.cipher,
-          secret: accessKey.secret
+          cipher: proxyParams.encryptionMethod,
+          secret: proxyParams.password
         }
       }
     };
