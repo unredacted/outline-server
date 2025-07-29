@@ -700,6 +700,3 @@ components:
           type: string
         websocket:
           $ref: "#/components/schemas/WebSocketConfig"
-        dynamicAccessKeyUrl:
-          type: string
-          description: URL to dynamic access key configuration for WebSocket transport

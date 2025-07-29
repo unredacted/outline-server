@@ -41,7 +41,6 @@ interface AccessKeyJson {
   dataLimit: DataLimit;
   accessUrl: string;
   websocket?: WebSocketConfig;
-  dynamicAccessKeyUrl?: string;
 }
 
 // Creates a AccessKey response.
@@ -66,11 +65,6 @@ function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
   
   if (accessKey.websocket) {
     result.websocket = accessKey.websocket;
-    // Generate dynamic access key URL if WebSocket is enabled
-    if (accessKey.websocket.enabled && accessKey.websocket.domain) {
-      // This URL would typically point to where the dynamic access key YAML is hosted
-      result.dynamicAccessKeyUrl = `https://${accessKey.websocket.domain}/access-keys/${accessKey.id}.yaml`;
-    }
   }
   
   return result;
