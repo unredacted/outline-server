@@ -323,6 +323,54 @@ function validateWebSocketConfig(websocket: unknown): WebSocketConfig | undefine
       'websocket.tls must be a boolean'
     );
   }
+  
+  // Additional validation for domain format when provided
+  if ('domain' in config && config.domain) {
+    const domain = config.domain as string;
+    // Use the same hostname validation regex as setHostnameForAccessKeys
+    const hostnameRegex =
+      /^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+    if (!hostnameRegex.test(domain) && !ipRegex({exact: true}).test(domain)) {
+      throw new restifyErrors.InvalidArgumentError(
+        {statusCode: 400},
+        'websocket.domain must be a valid domain name or IP address'
+      );
+    }
+  }
+  
+  // Validate paths format
+  const validatePath = (path: string, fieldName: string) => {
+    if (!path.startsWith('/')) {
+      throw new restifyErrors.InvalidArgumentError(
+        {statusCode: 400},
+        `websocket.${fieldName} must start with /`
+      );
+    }
+    if (path.includes('..')) {
+      throw new restifyErrors.InvalidArgumentError(
+        {statusCode: 400},
+        `websocket.${fieldName} cannot contain ..`
+      );
+    }
+  };
+  
+  if ('tcpPath' in config && config.tcpPath) {
+    validatePath(config.tcpPath as string, 'tcpPath');
+  }
+  
+  if ('udpPath' in config && config.udpPath) {
+    validatePath(config.udpPath as string, 'udpPath');
+  }
+  
+  // When WebSocket is enabled, domain is required
+  if (config.enabled === true) {
+    if (!config.domain) {
+      throw new restifyErrors.InvalidArgumentError(
+        {statusCode: 400},
+        'websocket.domain is required when WebSocket is enabled'
+      );
+    }
+  }
 
   return config as unknown as WebSocketConfig;
 }
