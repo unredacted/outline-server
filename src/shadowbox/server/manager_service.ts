@@ -25,9 +25,10 @@ import * as errors from '../model/errors';
 import * as version from './version';
 
 import {ManagerMetrics} from './manager_metrics';
-import {ServerConfigJson} from './server_config';
+import {ServerConfigJson, ListenersForNewAccessKeys, CaddyWebServerConfig} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
+import * as http from 'http';
 
 interface AccessKeyJson {
   // The unique identifier of this access key.
@@ -605,7 +606,7 @@ export class ShadowsocksManagerService {
     try {
       logging.debug(`setListenersForNewAccessKeys request ${JSON.stringify(req.params)}`);
       
-      const listeners = req.params as any;
+      const listeners = req.params as unknown as ListenersForNewAccessKeys;
       if (!listeners || typeof listeners !== 'object') {
         return next(
           new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid listeners configuration')
@@ -705,7 +706,7 @@ export class ShadowsocksManagerService {
     try {
       logging.debug(`configureCaddyWebServer request ${JSON.stringify(req.params)}`);
       
-      const config = req.params as any;
+      const config = req.params as unknown as CaddyWebServerConfig;
       if (!config || typeof config !== 'object') {
         return next(
           new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid Caddy configuration')
@@ -807,16 +808,21 @@ export class ShadowsocksManagerService {
     };
 
     // Add automatic HTTPS if configured
+    type CaddyServerConfigType = typeof caddyServerConfig & {
+      automatic_https?: {
+        email?: string;
+      };
+    };
+    const configWithHttps = caddyServerConfig as CaddyServerConfigType;
     if (caddyConfig.autoHttps && domain) {
-      (caddyServerConfig as any).automatic_https = {
+      configWithHttps.automatic_https = {
         email: caddyConfig.email
       };
     }
 
     // Send configuration to Caddy via its admin API
     try {
-      const http = require('http');
-      const data = JSON.stringify(caddyServerConfig);
+      const data = JSON.stringify(configWithHttps);
       
       const options = {
         hostname: adminEndpoint.split(':')[0],
