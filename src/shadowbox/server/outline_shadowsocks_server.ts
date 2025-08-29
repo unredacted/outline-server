@@ -21,15 +21,9 @@ import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
 import {ShadowsocksAccessKey, ShadowsocksServer} from '../model/shadowsocks_server';
 
-// Extended interface for access keys with WebSocket configuration
-export interface ShadowsocksAccessKeyWithWebSocket extends ShadowsocksAccessKey {
-  websocket?: {
-    enabled: boolean;
-    tcpPath?: string;
-    udpPath?: string;
-    domain?: string;
-    tls?: boolean;
-  };
+// Extended interface for access keys with listeners
+export interface ShadowsocksAccessKeyWithListeners extends ShadowsocksAccessKey {
+  listeners?: string[];
 }
 
 // Configuration types for outline-ss-server
@@ -145,9 +139,14 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
   private writeConfigFile(keys: ShadowsocksAccessKey[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Check if any key has WebSocket configuration
-      const extendedKeys = keys as ShadowsocksAccessKeyWithWebSocket[];
-      const hasWebSocketKeys = extendedKeys.some(key => key.websocket?.enabled);
+      // Check if any key has WebSocket listeners
+      const extendedKeys = keys as ShadowsocksAccessKeyWithListeners[];
+      const hasWebSocketKeys = extendedKeys.some(key => 
+        key.listeners && (
+          key.listeners.indexOf('websocket-stream') !== -1 || 
+          key.listeners.indexOf('websocket-packet') !== -1
+        )
+      );
       
       let config: ServerConfig;
       
@@ -180,9 +179,9 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     });
   }
 
-  private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithWebSocket[]): WebSocketConfig {
+  private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithListeners[]): WebSocketConfig {
     // Group keys by their listener configuration
-    const serviceGroups = new Map<string, ShadowsocksAccessKeyWithWebSocket[]>();
+    const serviceGroups = new Map<string, ShadowsocksAccessKeyWithListeners[]>();
     
     // Process each key
     for (const key of keys) {
@@ -193,9 +192,16 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
         continue;
       }
 
-      if (key.websocket?.enabled) {
-        // Group WebSocket-enabled keys by their paths
-        const groupKey = `ws:${key.websocket.tcpPath || '/tcp'}:${key.websocket.udpPath || '/udp'}`;
+      // Check if key has WebSocket listeners
+      const hasWebSocketListeners = key.listeners && (
+        key.listeners.indexOf('websocket-stream') !== -1 || 
+        key.listeners.indexOf('websocket-packet') !== -1
+      );
+
+      if (hasWebSocketListeners) {
+        // Group WebSocket-enabled keys
+        // For now, use default paths - in future, could be configurable per key
+        const groupKey = `ws:/tcp:/udp`;
         if (!serviceGroups.has(groupKey)) {
           serviceGroups.set(groupKey, []);
         }
@@ -217,10 +223,12 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     // Add web server configuration if any WebSocket keys exist
     if (Array.from(serviceGroups.keys()).some(k => k.startsWith('ws:'))) {
+      // Use configurable port or default to 8080
+      const webServerPort = this.webSocketConfig?.webServerPort || 8080;
       config.web = {
         servers: [{
           id: 'outline-ws-server',
-          listen: [`127.0.0.1:${this.webSocketConfig!.webServerPort}`]
+          listen: [`127.0.0.1:${webServerPort}`]
         }]
       };
     }
@@ -271,15 +279,24 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   /**
    * Generates dynamic access key YAML content for a specific access key with WebSocket support.
    * @param proxyParams The proxy parameters containing cipher and password
-   * @param websocket The WebSocket configuration
-   * @returns The YAML content as a string, or null if the key doesn't have WebSocket enabled
+   * @param domain The WebSocket server domain
+   * @param tcpPath The path for TCP over WebSocket
+   * @param udpPath The path for UDP over WebSocket
+   * @param tls Whether to use TLS (wss) or not (ws)
+   * @returns The YAML content as a string
    */
-  generateDynamicAccessKeyYaml(proxyParams: {encryptionMethod: string; password: string}, websocket?: {enabled: boolean; tcpPath?: string; udpPath?: string; domain?: string; tls?: boolean}): string | null {
-    if (!websocket?.enabled || !websocket.domain) {
+  generateDynamicAccessKeyYaml(
+    proxyParams: {encryptionMethod: string; password: string},
+    domain: string,
+    tcpPath: string,
+    udpPath: string,
+    tls: boolean
+  ): string | null {
+    if (!domain) {
       return null;
     }
 
-    const protocol = websocket.tls !== false ? 'wss' : 'ws';
+    const protocol = tls ? 'wss' : 'ws';
     
     const config = {
       transport: {
@@ -288,7 +305,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
           $type: 'shadowsocks',
           endpoint: {
             $type: 'websocket',
-            url: `${protocol}://${websocket.domain}${websocket.tcpPath || '/tcp'}`
+            url: `${protocol}://${domain}${tcpPath}`
           },
           cipher: proxyParams.encryptionMethod,
           secret: proxyParams.password
@@ -297,7 +314,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
           $type: 'shadowsocks',
           endpoint: {
             $type: 'websocket',
-            url: `${protocol}://${websocket.domain}${websocket.udpPath || '/udp'}`
+            url: `${protocol}://${domain}${udpPath}`
           },
           cipher: proxyParams.encryptionMethod,
           secret: proxyParams.password

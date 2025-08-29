@@ -20,7 +20,7 @@ import {makeConfig, SIP002_URI} from 'outline-shadowsocksconfig';
 
 import {JsonConfig} from '../infrastructure/json_config';
 import * as logging from '../infrastructure/logging';
-import {AccessKey, AccessKeyRepository, DataLimit, WebSocketConfig} from '../model/access_key';
+import {AccessKey, AccessKeyRepository, DataLimit, ListenerType} from '../model/access_key';
 import * as errors from '../model/errors';
 import * as version from './version';
 
@@ -40,7 +40,7 @@ interface AccessKeyJson {
   method: string;
   dataLimit: DataLimit;
   accessUrl: string;
-  websocket?: WebSocketConfig;
+  listeners?: ListenerType[];
 }
 
 // Creates a AccessKey response.
@@ -63,8 +63,8 @@ function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
     ),
   };
   
-  if (accessKey.websocket) {
-    result.websocket = accessKey.websocket;
+  if (accessKey.listeners) {
+    result.listeners = accessKey.listeners;
   }
   
   return result;
@@ -154,6 +154,14 @@ export function bindService(
   apiServer.put(
     `${apiPrefix}/server/port-for-new-access-keys`,
     service.setPortForNewAccessKeys.bind(service)
+  );
+  apiServer.put(
+    `${apiPrefix}/server/listeners-for-new-access-keys`,
+    service.setListenersForNewAccessKeys.bind(service)
+  );
+  apiServer.put(
+    `${apiPrefix}/server/web-server`,
+    service.configureCaddyWebServer.bind(service)
   );
 
   apiServer.post(`${apiPrefix}/access-keys`, service.createNewAccessKey.bind(service));
@@ -270,111 +278,6 @@ function validateNumberParam(param: unknown, paramName: string): number | undefi
   return param;
 }
 
-function validateWebSocketConfig(websocket: unknown): WebSocketConfig | undefined {
-  if (typeof websocket === 'undefined') {
-    return undefined;
-  }
-
-  if (typeof websocket !== 'object' || websocket === null) {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'WebSocket configuration must be an object'
-    );
-  }
-
-  const config = websocket as Record<string, unknown>;
-  
-  // Validate enabled field
-  if ('enabled' in config && typeof config.enabled !== 'boolean') {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'websocket.enabled must be a boolean'
-    );
-  }
-
-  // Validate tcpPath
-  if ('tcpPath' in config && typeof config.tcpPath !== 'string') {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'websocket.tcpPath must be a string'
-    );
-  }
-
-  // Validate udpPath
-  if ('udpPath' in config && typeof config.udpPath !== 'string') {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'websocket.udpPath must be a string'
-    );
-  }
-
-  // Validate domain
-  if ('domain' in config && typeof config.domain !== 'string') {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'websocket.domain must be a string'
-    );
-  }
-
-  // Validate tls
-  if ('tls' in config && typeof config.tls !== 'boolean') {
-    throw new restifyErrors.InvalidArgumentError(
-      {statusCode: 400},
-      'websocket.tls must be a boolean'
-    );
-  }
-  
-  // Additional validation for domain format when provided
-  if ('domain' in config && config.domain) {
-    const domain = config.domain as string;
-    // Use the same hostname validation regex as setHostnameForAccessKeys
-    const hostnameRegex =
-      /^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
-    if (!hostnameRegex.test(domain) && !ipRegex({exact: true}).test(domain)) {
-      throw new restifyErrors.InvalidArgumentError(
-        {statusCode: 400},
-        'websocket.domain must be a valid domain name or IP address'
-      );
-    }
-  }
-  
-  // Validate paths format
-  const validatePath = (path: string, fieldName: string) => {
-    if (!path.startsWith('/')) {
-      throw new restifyErrors.InvalidArgumentError(
-        {statusCode: 400},
-        `websocket.${fieldName} must start with /`
-      );
-    }
-    if (path.includes('..')) {
-      throw new restifyErrors.InvalidArgumentError(
-        {statusCode: 400},
-        `websocket.${fieldName} cannot contain ..`
-      );
-    }
-  };
-  
-  if ('tcpPath' in config && config.tcpPath) {
-    validatePath(config.tcpPath as string, 'tcpPath');
-  }
-  
-  if ('udpPath' in config && config.udpPath) {
-    validatePath(config.udpPath as string, 'udpPath');
-  }
-  
-  // When WebSocket is enabled, domain is required
-  if (config.enabled === true) {
-    if (!config.domain) {
-      throw new restifyErrors.InvalidArgumentError(
-        {statusCode: 400},
-        'websocket.domain is required when WebSocket is enabled'
-      );
-    }
-  }
-
-  return config as unknown as WebSocketConfig;
-}
-
 // The ShadowsocksManagerService manages the access keys that can use the server
 // as a proxy using Shadowsocks. It runs an instance of the Shadowsocks server
 // for each existing access key, with the port and password assigned for that access key.
@@ -470,28 +373,52 @@ export class ShadowsocksManagerService {
       const accessKeyId = validateAccessKeyId(req.params.id);
       const accessKey = this.accessKeys.getAccessKey(accessKeyId);
       
-      // Check if this is a WebSocket-enabled key
-      if (accessKey.websocket?.enabled) {
+      // Check if this key uses WebSocket listeners
+      const hasWebSocketListeners = accessKey.listeners && (
+        accessKey.listeners.indexOf('websocket-stream') !== -1 || 
+        accessKey.listeners.indexOf('websocket-packet') !== -1
+      );
+      
+      if (hasWebSocketListeners) {
         // Generate and return YAML for WebSocket keys
-        const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
-          generateDynamicAccessKeyYaml?: (proxyParams: {encryptionMethod: string; password: string}, websocket?: WebSocketConfig) => string | null;
-        };
-        const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(accessKey.proxyParams, accessKey.websocket);
+        const domain = this.serverConfig.data().caddyWebServer?.domain || 
+                      this.serverConfig.data().hostname;
+        const listenersConfig = this.serverConfig.data().listenersForNewAccessKeys;
         
-        if (yamlConfig) {
-          // Return raw YAML for WebSocket keys
-          const nodeResponse = res as unknown as {
-            setHeader: (name: string, value: string) => void;
-            statusCode: number;
-            write: (data: string) => void;
-            end: () => void;
+        if (domain && listenersConfig) {
+          const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
+            generateDynamicAccessKeyYaml?: (
+              proxyParams: {encryptionMethod: string; password: string},
+              domain: string,
+              tcpPath: string,
+              udpPath: string,
+              tls: boolean
+            ) => string | null;
           };
           
-          nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-          nodeResponse.statusCode = HttpSuccess.OK;
-          nodeResponse.write(yamlConfig);
-          nodeResponse.end();
-          return;
+          const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(
+            accessKey.proxyParams,
+            domain,
+            listenersConfig.websocketStream?.path || '/tcp',
+            listenersConfig.websocketPacket?.path || '/udp',
+            this.serverConfig.data().caddyWebServer?.autoHttps !== false
+          );
+          
+          if (yamlConfig) {
+            // Return raw YAML for WebSocket keys
+            const nodeResponse = res as unknown as {
+              setHeader: (name: string, value: string) => void;
+              statusCode: number;
+              write: (data: string) => void;
+              end: () => void;
+            };
+            
+            nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+            nodeResponse.statusCode = HttpSuccess.OK;
+            nodeResponse.write(yamlConfig);
+            nodeResponse.end();
+            return;
+          }
         }
       }
       
@@ -528,7 +455,39 @@ export class ShadowsocksManagerService {
       const dataLimit = validateDataLimit(req.params.limit);
       const password = validateStringParam(req.params.password, 'password');
       const portNumber = validateNumberParam(req.params.port, 'port');
-      const websocket = validateWebSocketConfig(req.params.websocket);
+      
+      // Validate listeners if provided
+      let listeners = req.params.listeners as string[] | undefined;
+      if (listeners) {
+        if (!Array.isArray(listeners)) {
+          throw new restifyErrors.InvalidArgumentError(
+            {statusCode: 400},
+            'listeners must be an array'
+          );
+        }
+        const validListeners = ['tcp', 'udp', 'websocket-stream', 'websocket-packet'];
+        for (const listener of listeners) {
+          if (validListeners.indexOf(listener) === -1) {
+            throw new restifyErrors.InvalidArgumentError(
+              {statusCode: 400},
+              `Invalid listener type: ${listener}`
+            );
+          }
+        }
+      } else {
+        // If no listeners specified, use default listeners based on server config
+        const serverListeners = this.serverConfig.data().listenersForNewAccessKeys;
+        if (serverListeners) {
+          listeners = [];
+          if (serverListeners.tcp) listeners.push('tcp');
+          if (serverListeners.udp) listeners.push('udp');
+          if (serverListeners.websocketStream) listeners.push('websocket-stream');
+          if (serverListeners.websocketPacket) listeners.push('websocket-packet');
+        } else {
+          // Default to TCP and UDP if nothing is configured
+          listeners = ['tcp', 'udp'];
+        }
+      }
 
       const accessKeyJson = accessKeyToApiJson(
         await this.accessKeys.createNewAccessKey({
@@ -538,7 +497,7 @@ export class ShadowsocksManagerService {
           dataLimit,
           password,
           portNumber,
-          websocket,
+          listeners: listeners as ListenerType[],
         })
       );
       return accessKeyJson;
@@ -615,6 +574,12 @@ export class ShadowsocksManagerService {
       }
       await this.accessKeys.setPortForNewAccessKeys(port);
       this.serverConfig.data().portForNewAccessKeys = port;
+      // Also update listeners config for backward compatibility
+      if (!this.serverConfig.data().listenersForNewAccessKeys) {
+        this.serverConfig.data().listenersForNewAccessKeys = {};
+      }
+      this.serverConfig.data().listenersForNewAccessKeys.tcp = { port };
+      this.serverConfig.data().listenersForNewAccessKeys.udp = { port };
       this.serverConfig.write();
       res.send(HttpSuccess.NO_CONTENT);
       next();
@@ -628,6 +593,260 @@ export class ShadowsocksManagerService {
         return next(error);
       }
       return next(new restifyErrors.InternalServerError(error));
+    }
+  }
+
+  // Sets the listeners for new access keys
+  async setListenersForNewAccessKeys(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
+    try {
+      logging.debug(`setListenersForNewAccessKeys request ${JSON.stringify(req.params)}`);
+      
+      const listeners = req.params as any;
+      if (!listeners || typeof listeners !== 'object') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid listeners configuration')
+        );
+      }
+
+      // Validate TCP listener
+      if (listeners.tcp) {
+        const tcpPort = listeners.tcp.port;
+        if (tcpPort !== undefined) {
+          if (typeof tcpPort !== 'number' || tcpPort < 1 || tcpPort > 65535) {
+            return next(
+              new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid TCP port')
+            );
+          }
+        }
+      }
+
+      // Validate UDP listener
+      if (listeners.udp) {
+        const udpPort = listeners.udp.port;
+        if (udpPort !== undefined) {
+          if (typeof udpPort !== 'number' || udpPort < 1 || udpPort > 65535) {
+            return next(
+              new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid UDP port')
+            );
+          }
+        }
+      }
+
+      // Validate WebSocket listeners
+      if (listeners.websocketStream) {
+        if (!listeners.websocketStream.path || typeof listeners.websocketStream.path !== 'string') {
+          return next(
+            new restifyErrors.InvalidArgumentError({statusCode: 400}, 'WebSocket stream path is required')
+          );
+        }
+        if (!listeners.websocketStream.path.startsWith('/')) {
+          return next(
+            new restifyErrors.InvalidArgumentError({statusCode: 400}, 'WebSocket stream path must start with /')
+          );
+        }
+        const wsPort = listeners.websocketStream.webServerPort;
+        if (wsPort !== undefined) {
+          if (typeof wsPort !== 'number' || wsPort < 1 || wsPort > 65535) {
+            return next(
+              new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid WebSocket server port')
+            );
+          }
+        }
+      }
+
+      if (listeners.websocketPacket) {
+        if (!listeners.websocketPacket.path || typeof listeners.websocketPacket.path !== 'string') {
+          return next(
+            new restifyErrors.InvalidArgumentError({statusCode: 400}, 'WebSocket packet path is required')
+          );
+        }
+        if (!listeners.websocketPacket.path.startsWith('/')) {
+          return next(
+            new restifyErrors.InvalidArgumentError({statusCode: 400}, 'WebSocket packet path must start with /')
+          );
+        }
+      }
+
+      // Store the listeners configuration
+      this.serverConfig.data().listenersForNewAccessKeys = listeners;
+      
+      // Update legacy portForNewAccessKeys if TCP port is set
+      if (listeners.tcp?.port) {
+        this.serverConfig.data().portForNewAccessKeys = listeners.tcp.port;
+        await this.accessKeys.setPortForNewAccessKeys(listeners.tcp.port);
+      }
+      
+      this.serverConfig.write();
+      res.send(HttpSuccess.NO_CONTENT);
+      next();
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.InvalidPortNumber) {
+        return next(new restifyErrors.InvalidArgumentError({statusCode: 400}, error.message));
+      } else if (error instanceof errors.PortUnavailable) {
+        return next(new restifyErrors.ConflictError(error.message));
+      } else if (error instanceof restifyErrors.HttpError) {
+        return next(error);
+      }
+      return next(new restifyErrors.InternalServerError(error));
+    }
+  }
+
+  // Configure Caddy web server for automatic HTTPS
+  async configureCaddyWebServer(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
+    try {
+      logging.debug(`configureCaddyWebServer request ${JSON.stringify(req.params)}`);
+      
+      const config = req.params as any;
+      if (!config || typeof config !== 'object') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid Caddy configuration')
+        );
+      }
+
+      // Validate configuration
+      if (config.enabled !== undefined && typeof config.enabled !== 'boolean') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'enabled must be a boolean')
+        );
+      }
+
+      if (config.autoHttps !== undefined && typeof config.autoHttps !== 'boolean') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'autoHttps must be a boolean')
+        );
+      }
+
+      if (config.email && typeof config.email !== 'string') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'email must be a string')
+        );
+      }
+
+      if (config.domain && typeof config.domain !== 'string') {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'domain must be a string')
+        );
+      }
+
+      // Store Caddy configuration
+      this.serverConfig.data().caddyWebServer = {
+        enabled: config.enabled ?? false,
+        adminEndpoint: config.adminEndpoint || 'localhost:2019',
+        autoHttps: config.autoHttps ?? false,
+        email: config.email,
+        domain: config.domain
+      };
+
+      // If enabled and we have WebSocket listeners, configure Caddy
+      if (config.enabled && this.serverConfig.data().listenersForNewAccessKeys?.websocketStream) {
+        await this.configureCaddyRoutes();
+      }
+
+      this.serverConfig.write();
+      res.send(HttpSuccess.NO_CONTENT);
+      next();
+    } catch (error) {
+      logging.error(error);
+      return next(new restifyErrors.InternalServerError(error));
+    }
+  }
+
+  // Helper method to configure Caddy routes via its API
+  private async configureCaddyRoutes(): Promise<void> {
+    const caddyConfig = this.serverConfig.data().caddyWebServer;
+    const listeners = this.serverConfig.data().listenersForNewAccessKeys;
+    
+    if (!caddyConfig?.enabled || !listeners) {
+      return;
+    }
+
+    const adminEndpoint = caddyConfig.adminEndpoint || 'localhost:2019';
+    const domain = caddyConfig.domain || this.serverConfig.data().hostname;
+    
+    // Build Caddy configuration
+    const paths: string[] = [];
+    if (listeners.websocketStream?.path) {
+      paths.push(listeners.websocketStream.path);
+    }
+    if (listeners.websocketPacket?.path) {
+      paths.push(listeners.websocketPacket.path);
+    }
+
+    if (paths.length === 0) {
+      return;
+    }
+
+    const wsPort = listeners.websocketStream?.webServerPort || 8080;
+    
+    const caddyServerConfig = {
+      listen: [':443'],
+      routes: [{
+        match: [{ path: paths }],
+        handle: [{
+          handler: 'reverse_proxy',
+          upstreams: [{ dial: `localhost:${wsPort}` }],
+          headers: {
+            request: {
+              set: {
+                'Upgrade': ['websocket'],
+                'Connection': ['Upgrade']
+              }
+            }
+          }
+        }]
+      }]
+    };
+
+    // Add automatic HTTPS if configured
+    if (caddyConfig.autoHttps && domain) {
+      (caddyServerConfig as any).automatic_https = {
+        email: caddyConfig.email
+      };
+    }
+
+    // Send configuration to Caddy via its admin API
+    try {
+      const http = require('http');
+      const data = JSON.stringify(caddyServerConfig);
+      
+      const options = {
+        hostname: adminEndpoint.split(':')[0],
+        port: parseInt(adminEndpoint.split(':')[1] || '2019'),
+        path: `/config/apps/http/servers/outline`,
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': data.length
+        }
+      };
+
+      await new Promise((resolve, reject) => {
+        const req = http.request(options, (res) => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(true);
+          } else {
+            reject(new Error(`Caddy API returned status ${res.statusCode}`));
+          }
+        });
+        
+        req.on('error', reject);
+        req.write(data);
+        req.end();
+      });
+      
+      logging.info('Successfully configured Caddy web server');
+    } catch (error) {
+      logging.error(`Failed to configure Caddy: ${error}`);
+      throw error;
     }
   }
 

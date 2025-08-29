@@ -17,6 +17,29 @@ import * as uuidv4 from 'uuid/v4';
 import * as json_config from '../infrastructure/json_config';
 import {DataLimit} from '../model/access_key';
 
+// Listener configuration for new access keys
+export interface ListenerConfig {
+  port?: number;
+  path?: string;
+  webServerPort?: number;
+}
+
+export interface ListenersForNewAccessKeys {
+  tcp?: ListenerConfig;
+  udp?: ListenerConfig;
+  websocketStream?: ListenerConfig;
+  websocketPacket?: ListenerConfig;
+}
+
+// Caddy web server configuration
+export interface CaddyWebServerConfig {
+  enabled?: boolean;
+  adminEndpoint?: string;  // Default: "localhost:2019"
+  autoHttps?: boolean;
+  email?: string;  // For ACME
+  domain?: string;  // Domain for automatic HTTPS
+}
+
 // Serialized format for the server config.
 // WARNING: Renaming fields will break backwards-compatibility.
 export interface ServerConfigJson {
@@ -30,6 +53,10 @@ export interface ServerConfigJson {
   createdTimestampMs?: number;
   // What port number should we use for new access keys?
   portForNewAccessKeys?: number;
+  // Listeners configuration for new access keys (supersedes portForNewAccessKeys)
+  listenersForNewAccessKeys?: ListenersForNewAccessKeys;
+  // Caddy web server configuration for automatic HTTPS
+  caddyWebServer?: CaddyWebServerConfig;
   // Which staged rollouts we should force enabled or disabled.
   rollouts?: RolloutConfigJson[];
   // We don't serialize the shadowbox version, this is obtained dynamically from node.
