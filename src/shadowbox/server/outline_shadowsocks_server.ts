@@ -150,8 +150,15 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       
       let config: ServerConfig;
       
-      if (hasWebSocketKeys && this.webSocketConfig?.enabled) {
+      if (hasWebSocketKeys) {
         // Use new format with WebSocket support
+        // Enable WebSocket if not already configured
+        if (!this.webSocketConfig) {
+          this.webSocketConfig = {
+            enabled: true,
+            webServerPort: 8080 // Default port
+          };
+        }
         config = this.generateWebSocketConfig(extendedKeys);
       } else {
         // Use legacy format for backward compatibility
