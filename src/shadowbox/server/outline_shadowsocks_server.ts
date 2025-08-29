@@ -329,8 +329,9 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       lineWidth: -1,  // Don't wrap long lines
       noRefs: true,   // Don't use references
       sortKeys: false, // Preserve key order
-      quotingType: '"', // Use double quotes when needed
-      forceQuotes: false // Don't quote all strings
+      styles: {
+        '!!null': 'canonical' // Use ~ for null values
+      }
     });
   }
 
