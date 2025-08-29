@@ -298,22 +298,23 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     const protocol = tls ? 'wss' : 'ws';
     
+    // Generate YAML configuration matching Outline client spec exactly
     const config = {
       transport: {
-        $type: 'tcpudp',
+        '$type': 'tcpudp',
         tcp: {
-          $type: 'shadowsocks',
+          '$type': 'shadowsocks',
           endpoint: {
-            $type: 'websocket',
+            '$type': 'websocket',
             url: `${protocol}://${domain}${tcpPath}`
           },
           cipher: proxyParams.encryptionMethod,
           secret: proxyParams.password
         },
         udp: {
-          $type: 'shadowsocks',
+          '$type': 'shadowsocks',
           endpoint: {
-            $type: 'websocket',
+            '$type': 'websocket',
             url: `${protocol}://${domain}${udpPath}`
           },
           cipher: proxyParams.encryptionMethod,
@@ -322,7 +323,15 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       }
     };
 
-    return jsyaml.safeDump(config, {sortKeys: true});
+    // Use specific YAML options to ensure proper formatting
+    return jsyaml.dump(config, {
+      indent: 2,
+      lineWidth: -1,  // Don't wrap long lines
+      noRefs: true,   // Don't use references
+      sortKeys: false, // Preserve key order
+      quotingType: '"', // Use double quotes when needed
+      forceQuotes: false // Don't quote all strings
+    });
   }
 
   private start() {

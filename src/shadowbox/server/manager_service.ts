@@ -393,7 +393,10 @@ export class ShadowsocksManagerService {
         const domain = configData?.caddyWebServer?.domain || configData?.hostname;
         const listenersConfig = configData?.listenersForNewAccessKeys;
         
-        if (domain && listenersConfig) {
+        logging.debug(`WebSocket key detected. Domain: ${domain}, Listeners config: ${JSON.stringify(listenersConfig)}`);
+        
+        // Generate YAML even if listenersConfig is not fully configured, using defaults
+        if (domain) {
           const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
             generateDynamicAccessKeyYaml?: (
               proxyParams: {encryptionMethod: string; password: string},
@@ -407,8 +410,8 @@ export class ShadowsocksManagerService {
           const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(
             accessKey.proxyParams,
             domain,
-            listenersConfig.websocketStream?.path || '/tcp',
-            listenersConfig.websocketPacket?.path || '/udp',
+            listenersConfig?.websocketStream?.path || '/tcp',
+            listenersConfig?.websocketPacket?.path || '/udp',
             this.serverConfig.data()?.caddyWebServer?.autoHttps !== false
           );
           
