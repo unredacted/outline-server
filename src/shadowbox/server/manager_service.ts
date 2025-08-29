@@ -308,23 +308,27 @@ export class ShadowsocksManagerService {
       );
       return;
     }
-    this.serverConfig.data().name = name;
+    const configData = this.serverConfig.data();
+    if (configData) {
+      configData.name = name;
+    }
     this.serverConfig.write();
     res.send(HttpSuccess.NO_CONTENT);
     next();
   }
 
   getServer(req: RequestType, res: ResponseType, next: restify.Next): void {
+    const configData = this.serverConfig.data();
     res.send(HttpSuccess.OK, {
-      name: this.serverConfig.data().name || this.defaultServerName,
-      serverId: this.serverConfig.data().serverId,
-      metricsEnabled: this.serverConfig.data().metricsEnabled || false,
-      createdTimestampMs: this.serverConfig.data().createdTimestampMs,
+      name: configData?.name || this.defaultServerName,
+      serverId: configData?.serverId,
+      metricsEnabled: configData?.metricsEnabled || false,
+      createdTimestampMs: configData?.createdTimestampMs,
       version: version.getPackageVersion(),
-      accessKeyDataLimit: this.serverConfig.data().accessKeyDataLimit,
-      portForNewAccessKeys: this.serverConfig.data().portForNewAccessKeys,
-      hostnameForAccessKeys: this.serverConfig.data().hostname,
-      experimental: this.serverConfig.data().experimental,
+      accessKeyDataLimit: configData?.accessKeyDataLimit,
+      portForNewAccessKeys: configData?.portForNewAccessKeys,
+      hostnameForAccessKeys: configData?.hostname,
+      experimental: configData?.experimental,
     });
     next();
   }
@@ -360,7 +364,10 @@ export class ShadowsocksManagerService {
       );
     }
 
-    this.serverConfig.data().hostname = hostname;
+    const configData = this.serverConfig.data();
+    if (configData) {
+      configData.hostname = hostname;
+    }
     this.serverConfig.write();
     this.accessKeys.setHostname(hostname);
     res.send(HttpSuccess.NO_CONTENT);
@@ -382,9 +389,9 @@ export class ShadowsocksManagerService {
       
       if (hasWebSocketListeners) {
         // Generate and return YAML for WebSocket keys
-        const domain = this.serverConfig.data().caddyWebServer?.domain || 
-                      this.serverConfig.data().hostname;
-        const listenersConfig = this.serverConfig.data().listenersForNewAccessKeys;
+        const configData = this.serverConfig.data();
+        const domain = configData?.caddyWebServer?.domain || configData?.hostname;
+        const listenersConfig = configData?.listenersForNewAccessKeys;
         
         if (domain && listenersConfig) {
           const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
@@ -402,7 +409,7 @@ export class ShadowsocksManagerService {
             domain,
             listenersConfig.websocketStream?.path || '/tcp',
             listenersConfig.websocketPacket?.path || '/udp',
-            this.serverConfig.data().caddyWebServer?.autoHttps !== false
+            this.serverConfig.data()?.caddyWebServer?.autoHttps !== false
           );
           
           if (yamlConfig) {
@@ -477,7 +484,7 @@ export class ShadowsocksManagerService {
         }
       } else {
         // If no listeners specified, use default listeners based on server config
-        const serverListeners = this.serverConfig.data().listenersForNewAccessKeys;
+        const serverListeners = this.serverConfig.data()?.listenersForNewAccessKeys;
         if (serverListeners) {
           listeners = [];
           if (serverListeners.tcp) listeners.push('tcp');
@@ -574,13 +581,16 @@ export class ShadowsocksManagerService {
         );
       }
       await this.accessKeys.setPortForNewAccessKeys(port);
-      this.serverConfig.data().portForNewAccessKeys = port;
-      // Also update listeners config for backward compatibility
-      if (!this.serverConfig.data().listenersForNewAccessKeys) {
-        this.serverConfig.data().listenersForNewAccessKeys = {};
+      const configData = this.serverConfig.data();
+      if (configData) {
+        configData.portForNewAccessKeys = port;
+        // Also update listeners config for backward compatibility
+        if (!configData.listenersForNewAccessKeys) {
+          configData.listenersForNewAccessKeys = {};
+        }
+        configData.listenersForNewAccessKeys.tcp = { port };
+        configData.listenersForNewAccessKeys.udp = { port };
       }
-      this.serverConfig.data().listenersForNewAccessKeys.tcp = { port };
-      this.serverConfig.data().listenersForNewAccessKeys.udp = { port };
       this.serverConfig.write();
       res.send(HttpSuccess.NO_CONTENT);
       next();
@@ -673,12 +683,15 @@ export class ShadowsocksManagerService {
       }
 
       // Store the listeners configuration
-      this.serverConfig.data().listenersForNewAccessKeys = listeners;
-      
-      // Update legacy portForNewAccessKeys if TCP port is set
-      if (listeners.tcp?.port) {
-        this.serverConfig.data().portForNewAccessKeys = listeners.tcp.port;
-        await this.accessKeys.setPortForNewAccessKeys(listeners.tcp.port);
+      const configData = this.serverConfig.data();
+      if (configData) {
+        configData.listenersForNewAccessKeys = listeners;
+        
+        // Update legacy portForNewAccessKeys if TCP port is set
+        if (listeners.tcp?.port) {
+          configData.portForNewAccessKeys = listeners.tcp.port;
+          await this.accessKeys.setPortForNewAccessKeys(listeners.tcp.port);
+        }
       }
       
       this.serverConfig.write();
@@ -739,17 +752,20 @@ export class ShadowsocksManagerService {
       }
 
       // Store Caddy configuration
-      this.serverConfig.data().caddyWebServer = {
-        enabled: config.enabled ?? false,
-        adminEndpoint: config.adminEndpoint || 'localhost:2019',
-        autoHttps: config.autoHttps ?? false,
-        email: config.email,
-        domain: config.domain
-      };
+      const configData = this.serverConfig.data();
+      if (configData) {
+        configData.caddyWebServer = {
+          enabled: config.enabled ?? false,
+          adminEndpoint: config.adminEndpoint || 'localhost:2019',
+          autoHttps: config.autoHttps ?? false,
+          email: config.email,
+          domain: config.domain
+        };
 
-      // If enabled and we have WebSocket listeners, configure Caddy
-      if (config.enabled && this.serverConfig.data().listenersForNewAccessKeys?.websocketStream) {
-        await this.configureCaddyRoutes();
+        // If enabled and we have WebSocket listeners, configure Caddy
+        if (config.enabled && configData.listenersForNewAccessKeys?.websocketStream) {
+          await this.configureCaddyRoutes();
+        }
       }
 
       this.serverConfig.write();
@@ -763,15 +779,16 @@ export class ShadowsocksManagerService {
 
   // Helper method to configure Caddy routes via its API
   private async configureCaddyRoutes(): Promise<void> {
-    const caddyConfig = this.serverConfig.data().caddyWebServer;
-    const listeners = this.serverConfig.data().listenersForNewAccessKeys;
+    const configData = this.serverConfig.data();
+    const caddyConfig = configData?.caddyWebServer;
+    const listeners = configData?.listenersForNewAccessKeys;
     
     if (!caddyConfig?.enabled || !listeners) {
       return;
     }
 
     const adminEndpoint = caddyConfig.adminEndpoint || 'localhost:2019';
-    const domain = caddyConfig.domain || this.serverConfig.data().hostname;
+    const domain = caddyConfig.domain || configData?.hostname;
     
     // Build Caddy configuration
     const paths: string[] = [];
@@ -951,7 +968,10 @@ export class ShadowsocksManagerService {
       // Enforcement is done asynchronously in the proxy server.  This is transparent to the manager
       // so this doesn't introduce any race conditions between the server and UI.
       this.accessKeys.setDefaultDataLimit(limit);
-      this.serverConfig.data().accessKeyDataLimit = limit;
+      const configData = this.serverConfig.data();
+      if (configData) {
+        configData.accessKeyDataLimit = limit;
+      }
       this.serverConfig.write();
       res.send(HttpSuccess.NO_CONTENT);
       return next();
@@ -970,7 +990,10 @@ export class ShadowsocksManagerService {
       // Enforcement is done asynchronously in the proxy server.  This is transparent to the manager
       // so this doesn't introduce any race conditions between the server and UI.
       this.accessKeys.removeDefaultDataLimit();
-      delete this.serverConfig.data().accessKeyDataLimit;
+      const configData = this.serverConfig.data();
+      if (configData) {
+        delete configData.accessKeyDataLimit;
+      }
       this.serverConfig.write();
       res.send(HttpSuccess.NO_CONTENT);
       return next();
