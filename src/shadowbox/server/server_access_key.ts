@@ -336,6 +336,7 @@ export class ServerAccessKeyRepository implements AccessKeyRepository {
           port: key.proxyParams.portNumber,
           cipher: key.proxyParams.encryptionMethod,
           secret: key.proxyParams.password,
+          listeners: key.listeners, // Pass listeners to enable WebSocket config generation
         };
       });
     return this.shadowsocksServer.update(serverAccessKeys);

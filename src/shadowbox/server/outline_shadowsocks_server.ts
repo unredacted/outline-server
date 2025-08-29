@@ -141,12 +141,23 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     return new Promise((resolve, reject) => {
       // Check if any key has WebSocket listeners
       const extendedKeys = keys as ShadowsocksAccessKeyWithListeners[];
+      
+      // Debug logging
+      logging.info(`Writing config for ${keys.length} keys`);
+      extendedKeys.forEach(key => {
+        if (key.listeners) {
+          logging.info(`Key ${key.id} has listeners: ${JSON.stringify(key.listeners)}`);
+        }
+      });
+      
       const hasWebSocketKeys = extendedKeys.some(key => 
         key.listeners && (
           key.listeners.indexOf('websocket-stream') !== -1 || 
           key.listeners.indexOf('websocket-packet') !== -1
         )
       );
+      
+      logging.info(`WebSocket keys detected: ${hasWebSocketKeys}`);
       
       let config: ServerConfig;
       
