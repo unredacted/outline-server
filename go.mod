@@ -6,6 +6,7 @@ toolchain go1.24.5
 
 require (
 	github.com/Jigsaw-Code/outline-ss-server v1.9.2
+	github.com/Jigsaw-Code/outline-ss-server/outlinecaddy v0.0.1
 	github.com/go-task/task/v3 v3.36.0
 	github.com/google/addlicense v1.1.1
 )
@@ -44,10 +45,10 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/crypto v0.32.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
+	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
-	google.golang.org/protobuf v1.36.3 // indirect
+	google.golang.org/protobuf v1.36.4 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	mvdan.cc/sh/v3 v3.8.0 // indirect
 )
