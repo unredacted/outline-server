@@ -31,6 +31,7 @@ import * as version from './version';
 import {PrometheusManagerMetrics} from './manager_metrics';
 import {bindService, ShadowsocksManagerService} from './manager_service';
 import {OutlineShadowsocksServer} from './outline_shadowsocks_server';
+import {OutlineCaddyServer} from './outline_caddy_server';
 import {AccessKeyConfigJson, ServerAccessKeyRepository} from './server_access_key';
 import * as server_config from './server_config';
 import {
@@ -162,13 +163,26 @@ async function main() {
   if (fs.existsSync(MMDB_LOCATION_ASN)) {
     shadowsocksServer.configureAsnMetrics(MMDB_LOCATION_ASN);
   }
+  const caddyServer = new OutlineCaddyServer(
+    getBinaryFilename('outline-caddy'),
+    getPersistentFilename('outline-caddy/config.json'),
+    verbose
+  );
   
-  // Configure WebSocket support if enabled
+  // Configure listener defaults (e.g., WebSocket paths/ports) based on server configuration.
   const listenersConfig = serverConfig.data().listenersForNewAccessKeys;
-  const webSocketPort = listenersConfig?.websocketStream?.webServerPort || 
-                        listenersConfig?.websocketPacket?.webServerPort || 
-                        8080; // Default internal WebSocket server port
-  shadowsocksServer.configureWebSocket(webSocketPort);
+  shadowsocksServer.configureListeners(
+    listenersConfig
+      ? {
+          websocketStream: listenersConfig.websocketStream
+            ? {...listenersConfig.websocketStream}
+            : undefined,
+          websocketPacket: listenersConfig.websocketPacket
+            ? {...listenersConfig.websocketPacket}
+            : undefined,
+        }
+      : undefined
+  );
 
   const isReplayProtectionEnabled = createRolloutTracker(serverConfig).isRolloutEnabled(
     'replay-protection',
@@ -219,6 +233,17 @@ async function main() {
     serverConfig.data().accessKeyDataLimit
   );
 
+  try {
+    await caddyServer.applyConfig({
+      accessKeys: accessKeyRepository.listAccessKeys(),
+      listeners: serverConfig.data().listenersForNewAccessKeys,
+      caddyConfig: serverConfig.data().caddyWebServer,
+      hostname: serverConfig.data().hostname,
+    });
+  } catch (error) {
+    logging.error(`Failed to apply initial Caddy configuration: ${error}`);
+  }
+
   const metricsReader = new PrometheusUsageMetrics(prometheusClient);
   const managerMetrics = new PrometheusManagerMetrics(prometheusClient);
   const metricsCollector = new RestMetricsCollectorClient(metricsCollectorUrl);
@@ -235,7 +260,8 @@ async function main() {
     accessKeyRepository,
     shadowsocksServer,
     managerMetrics,
-    metricsPublisher
+    metricsPublisher,
+    caddyServer
   );
 
   const certificateFilename = process.env.SB_CERTIFICATE_FILE;

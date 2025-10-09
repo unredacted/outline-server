@@ -40,6 +40,7 @@ tasks:
         vars: {TARGET_DIR: '{{.BIN_DIR}}'}
       # Set CGO_ENABLED=0 to force static linkage. See https://mt165.co.uk/blog/static-link-go/.
       - GOOS={{.TARGET_OS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -ldflags='-s -w -X main.version=embedded' -o '{{.BIN_DIR}}/' github.com/Jigsaw-Code/outline-ss-server/cmd/outline-ss-server
+      - GOOS={{.TARGET_OS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -tags='nomysql' -ldflags='-s -w' -o '{{.BIN_DIR}}/outline-caddy' github.com/Jigsaw-Code/outline-ss-server/outlinecaddy/cmd/caddy
 
   start:
     desc: Run the Outline server locally

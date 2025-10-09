@@ -34,7 +34,6 @@ export interface ListenersForNewAccessKeys {
 // Caddy web server configuration
 export interface CaddyWebServerConfig {
   enabled?: boolean;
-  adminEndpoint?: string;  // Default: "localhost:2019"
   autoHttps?: boolean;
   email?: string;  // For ACME
   domain?: string;  // Domain for automatic HTTPS

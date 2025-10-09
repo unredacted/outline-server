@@ -19,7 +19,8 @@ import * as path from 'path';
 
 import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
-import {ShadowsocksAccessKey, ShadowsocksServer} from '../model/shadowsocks_server';
+import {ListenerType} from '../model/access_key';
+import {ListenerSettings, ShadowsocksAccessKey, ShadowsocksServer} from '../model/shadowsocks_server';
 
 // Extended interface for access keys with listeners
 export interface ShadowsocksAccessKeyWithListeners extends ShadowsocksAccessKey {
@@ -70,10 +71,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   private ipAsnFilename?: string;
   private isAsnMetricsEnabled = false;
   private isReplayProtectionEnabled = false;
-  private webSocketConfig?: {
-    enabled: boolean;
-    webServerPort: number;
-  };
+  private listenerSettings: ListenerSettings = {};
 
   /**
    * @param binaryFilename The location for the outline-ss-server binary.
@@ -114,11 +112,45 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   /**
    * Configures WebSocket support for the Shadowsocks server.
    * @param webServerPort The port for the internal WebSocket server to listen on.
+   * @param tcpPath Optional path to expose TCP over WebSocket.
+   * @param udpPath Optional path to expose UDP over WebSocket.
    */
-  configureWebSocket(webServerPort: number): OutlineShadowsocksServer {
-    this.webSocketConfig = {
-      enabled: true,
-      webServerPort,
+  configureWebSocket(
+    webServerPort: number,
+    tcpPath = '/tcp',
+    udpPath = '/udp'
+  ): OutlineShadowsocksServer {
+    return this.configureListeners({
+      websocketStream: {webServerPort, path: tcpPath},
+      websocketPacket: {webServerPort, path: udpPath},
+    });
+  }
+
+  configureListeners(listeners: ListenerSettings | undefined): OutlineShadowsocksServer {
+    if (!listeners) {
+      this.listenerSettings = {};
+      return this;
+    }
+
+    const stream = listeners.websocketStream
+      ? {...listeners.websocketStream}
+      : undefined;
+    const packet = listeners.websocketPacket
+      ? {...listeners.websocketPacket}
+      : undefined;
+
+    // If only one listener specifies the web server port, share it across both listeners.
+    const sharedPort = stream?.webServerPort ?? packet?.webServerPort;
+    if (stream && sharedPort !== undefined && stream.webServerPort === undefined) {
+      stream.webServerPort = sharedPort;
+    }
+    if (packet && sharedPort !== undefined && packet.webServerPort === undefined) {
+      packet.webServerPort = sharedPort;
+    }
+
+    this.listenerSettings = {
+      websocketStream: stream,
+      websocketPacket: packet,
     };
     return this;
   }
@@ -163,13 +195,6 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       
       if (hasWebSocketKeys) {
         // Use new format with WebSocket support
-        // Enable WebSocket if not already configured
-        if (!this.webSocketConfig) {
-          this.webSocketConfig = {
-            enabled: true,
-            webServerPort: 8080 // Default port
-          };
-        }
         config = this.generateWebSocketConfig(extendedKeys);
       } else {
         // Use legacy format for backward compatibility
@@ -197,11 +222,27 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     });
   }
 
+  private getWebSocketSettings() {
+    const stream = this.listenerSettings.websocketStream ?? {};
+    const packet = this.listenerSettings.websocketPacket ?? {};
+    const webServerPort = stream.webServerPort ?? packet.webServerPort ?? 8080;
+    const tcpPath = stream.path ?? '/tcp';
+    const udpPath = packet.path ?? '/udp';
+    return {webServerPort, tcpPath, udpPath};
+  }
+
   private generateWebSocketConfig(keys: ShadowsocksAccessKeyWithListeners[]): WebSocketConfig {
-    // Group keys by their listener configuration
-    const serviceGroups = new Map<string, ShadowsocksAccessKeyWithListeners[]>();
-    
-    // Process each key
+    const {webServerPort, tcpPath, udpPath} = this.getWebSocketSettings();
+    const webServerId = 'outline-ws-server';
+
+    type ListenerDescriptor = WebSocketListener | TcpUdpListener;
+    interface ServiceGroup {
+      listeners: ListenerDescriptor[];
+      keys: ShadowsocksAccessKeyWithListeners[];
+    }
+
+    const serviceGroups = new Map<string, ServiceGroup>();
+
     for (const key of keys) {
       if (!isAeadCipher(key.cipher)) {
         logging.error(
@@ -210,84 +251,103 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
         continue;
       }
 
-      // Check if key has WebSocket listeners
-      const hasWebSocketListeners = key.listeners && (
-        key.listeners.indexOf('websocket-stream') !== -1 || 
-        key.listeners.indexOf('websocket-packet') !== -1
+      const listenerSet = new Set<ListenerType>(
+        (key.listeners as ListenerType[] | undefined) ?? ['tcp', 'udp']
       );
-
-      if (hasWebSocketListeners) {
-        // Group WebSocket-enabled keys
-        // For now, use default paths - in future, could be configurable per key
-        const groupKey = `ws:/tcp:/udp`;
-        if (!serviceGroups.has(groupKey)) {
-          serviceGroups.set(groupKey, []);
-        }
-        serviceGroups.get(groupKey)!.push(key);
-      } else {
-        // Group traditional keys by port
-        const groupKey = `port:${key.port}`;
-        if (!serviceGroups.has(groupKey)) {
-          serviceGroups.set(groupKey, []);
-        }
-        serviceGroups.get(groupKey)!.push(key);
+      if (listenerSet.size === 0) {
+        listenerSet.add('tcp');
+        listenerSet.add('udp');
       }
+
+      const listenersForKey: ListenerDescriptor[] = [];
+
+      if (listenerSet.has('tcp')) {
+        listenersForKey.push({
+          type: 'tcp',
+          address: `[::]:${key.port}`,
+        });
+      }
+      if (listenerSet.has('udp')) {
+        listenersForKey.push({
+          type: 'udp',
+          address: `[::]:${key.port}`,
+        });
+      }
+      if (listenerSet.has('websocket-stream')) {
+        listenersForKey.push({
+          type: 'websocket-stream',
+          web_server: webServerId,
+          path: tcpPath,
+        });
+      }
+      if (listenerSet.has('websocket-packet')) {
+        listenersForKey.push({
+          type: 'websocket-packet',
+          web_server: webServerId,
+          path: udpPath,
+        });
+      }
+
+      if (listenersForKey.length === 0) {
+        logging.warn(
+          `Access key ${key.id} has no listeners configured; assigning default TCP/UDP listeners.`
+        );
+        listenersForKey.push(
+          {type: 'tcp', address: `[::]:${key.port}`},
+          {type: 'udp', address: `[::]:${key.port}`}
+        );
+      }
+
+      const signatureParts = listenersForKey
+        .map((listener) => {
+          if (listener.type === 'tcp' || listener.type === 'udp') {
+            return `${listener.type}:${listener.address}`;
+          }
+          return `${listener.type}:${listener.path}`;
+        })
+        .sort();
+      const groupKey = signatureParts.join('|');
+
+      if (!serviceGroups.has(groupKey)) {
+        const listenersClone = listenersForKey.map((listener) => ({...listener}));
+        serviceGroups.set(groupKey, {listeners: listenersClone as ListenerDescriptor[], keys: []});
+      }
+      serviceGroups.get(groupKey)!.keys.push(key);
     }
 
-    // Build the configuration
     const config: WebSocketConfig = {
-      services: []
+      services: [],
     };
 
-    // Add web server configuration if any WebSocket keys exist
-    if (Array.from(serviceGroups.keys()).some(k => k.startsWith('ws:'))) {
-      // Use configurable port or default to 8080
-      const webServerPort = this.webSocketConfig?.webServerPort || 8080;
+    const needsWebServer = Array.from(serviceGroups.values()).some((group) =>
+      group.listeners.some(
+        (listener) =>
+          listener.type === 'websocket-stream' || listener.type === 'websocket-packet'
+      )
+    );
+
+    if (needsWebServer) {
       config.web = {
-        servers: [{
-          id: 'outline-ws-server',
-          listen: [`127.0.0.1:${webServerPort}`]
-        }]
+        servers: [
+          {
+            id: webServerId,
+            listen: [`127.0.0.1:${webServerPort}`],
+          },
+        ],
       };
     }
 
-    // Create services
-    for (const [groupKey, groupKeys] of serviceGroups) {
+    for (const group of serviceGroups.values()) {
       const service: ServiceConfig = {
-        listeners: [],
-        keys: groupKeys.map(k => ({
+        listeners: group.listeners.map((listener) => ({...listener})) as Array<
+          WebSocketListener | TcpUdpListener
+        >,
+        keys: group.keys.map((k) => ({
           id: k.id,
           cipher: k.cipher,
-          secret: k.secret
-        }))
+          secret: k.secret,
+        })),
       };
-
-      if (groupKey.startsWith('ws:')) {
-        // WebSocket listeners
-        const [, tcpPath, udpPath] = groupKey.split(':');
-        service.listeners.push({
-          type: 'websocket-stream',
-          web_server: 'outline-ws-server',
-          path: tcpPath
-        });
-        service.listeners.push({
-          type: 'websocket-packet',
-          web_server: 'outline-ws-server',
-          path: udpPath
-        });
-      } else if (groupKey.startsWith('port:')) {
-        // Traditional TCP/UDP listeners
-        const port = groupKey.split(':')[1];
-        service.listeners.push({
-          type: 'tcp',
-          address: `[::]:${port}`
-        });
-        service.listeners.push({
-          type: 'udp',
-          address: `[::]:${port}`
-        });
-      }
-
       config.services.push(service);
     }
 
@@ -308,37 +368,56 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     domain: string,
     tcpPath: string,
     udpPath: string,
-    tls: boolean
+    tls: boolean,
+    listeners?: ListenerType[]
   ): string | null {
     if (!domain) {
       return null;
     }
 
+    const listenerSet = new Set<ListenerType>(listeners ?? ['websocket-stream', 'websocket-packet']);
+    const includeStream = listenerSet.has('websocket-stream');
+    const includePacket = listenerSet.has('websocket-packet');
+
+    if (!includeStream && !includePacket) {
+      logging.warn('Dynamic access key requested without WebSocket listeners; skipping YAML output.');
+      return null;
+    }
+
     const protocol = tls ? 'wss' : 'ws';
-    
-    // Generate YAML configuration matching Outline client spec exactly
-    const config = {
-      transport: {
-        '$type': 'tcpudp',
-        tcp: {
-          '$type': 'shadowsocks',
-          endpoint: {
-            '$type': 'websocket',
-            url: `${protocol}://${domain}${tcpPath}`
-          },
-          cipher: proxyParams.encryptionMethod,
-          secret: proxyParams.password
+    const transportType =
+      includeStream && includePacket ? 'tcpudp' : includeStream ? 'tcp' : 'udp';
+
+    const transport: Record<string, unknown> = {
+      '$type': transportType,
+    };
+
+    if (includeStream) {
+      transport['tcp'] = {
+        '$type': 'shadowsocks',
+        endpoint: {
+          '$type': 'websocket',
+          url: `${protocol}://${domain}${tcpPath}`,
         },
-        udp: {
-          '$type': 'shadowsocks',
-          endpoint: {
-            '$type': 'websocket',
-            url: `${protocol}://${domain}${udpPath}`
-          },
-          cipher: proxyParams.encryptionMethod,
-          secret: proxyParams.password
-        }
-      }
+        cipher: proxyParams.encryptionMethod,
+        secret: proxyParams.password,
+      };
+    }
+
+    if (includePacket) {
+      transport['udp'] = {
+        '$type': 'shadowsocks',
+        endpoint: {
+          '$type': 'websocket',
+          url: `${protocol}://${domain}${udpPath}`,
+        },
+        cipher: proxyParams.encryptionMethod,
+        secret: proxyParams.password,
+      };
+    }
+
+    const config = {
+      transport,
     };
 
     // Use specific YAML options to ensure proper formatting

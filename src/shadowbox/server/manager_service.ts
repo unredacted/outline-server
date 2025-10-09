@@ -28,7 +28,7 @@ import {ManagerMetrics} from './manager_metrics';
 import {ServerConfigJson, ListenersForNewAccessKeys, CaddyWebServerConfig} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
-import * as http from 'http';
+import type {OutlineCaddyController} from './outline_caddy_server';
 
 interface AccessKeyJson {
   // The unique identifier of this access key.
@@ -289,7 +289,8 @@ export class ShadowsocksManagerService {
     private accessKeys: AccessKeyRepository,
     private shadowsocksServer: ShadowsocksServer,
     private managerMetrics: ManagerMetrics,
-    private metricsPublisher: SharedMetricsPublisher
+    private metricsPublisher: SharedMetricsPublisher,
+    private readonly caddyServer?: OutlineCaddyController
   ) {}
 
   renameServer(req: RequestType, res: ResponseType, next: restify.Next): void {
@@ -334,7 +335,11 @@ export class ShadowsocksManagerService {
   }
 
   // Changes the server's hostname.  Hostname must be a valid domain or IP address
-  setHostnameForAccessKeys(req: RequestType, res: ResponseType, next: restify.Next): void {
+  async setHostnameForAccessKeys(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
     logging.debug(`changeHostname request: ${JSON.stringify(req.params)}`);
 
     const hostname = req.params.hostname;
@@ -370,6 +375,11 @@ export class ShadowsocksManagerService {
     }
     this.serverConfig.write();
     this.accessKeys.setHostname(hostname);
+    try {
+      await this.updateCaddyConfig();
+    } catch (error) {
+      return next(new restifyErrors.InternalServerError(error));
+    }
     res.send(HttpSuccess.NO_CONTENT);
     next();
   }
@@ -396,23 +406,25 @@ export class ShadowsocksManagerService {
         logging.debug(`WebSocket key detected. Domain: ${domain}, Listeners config: ${JSON.stringify(listenersConfig)}`);
         
         // Generate YAML even if listenersConfig is not fully configured, using defaults
-        if (domain) {
-          const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
-            generateDynamicAccessKeyYaml?: (
-              proxyParams: {encryptionMethod: string; password: string},
-              domain: string,
-              tcpPath: string,
-              udpPath: string,
-              tls: boolean
-            ) => string | null;
-          };
+          if (domain) {
+            const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
+              generateDynamicAccessKeyYaml?: (
+                proxyParams: {encryptionMethod: string; password: string},
+                domain: string,
+                tcpPath: string,
+                udpPath: string,
+                tls: boolean,
+                listeners?: ListenerType[]
+              ) => string | null;
+            };
           
           const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(
             accessKey.proxyParams,
             domain,
             listenersConfig?.websocketStream?.path || '/tcp',
             listenersConfig?.websocketPacket?.path || '/udp',
-            this.serverConfig.data()?.caddyWebServer?.autoHttps !== false
+            this.serverConfig.data()?.caddyWebServer?.autoHttps !== false,
+            accessKey.listeners as ListenerType[] | undefined
           );
           
           if (yamlConfig) {
@@ -511,6 +523,7 @@ export class ShadowsocksManagerService {
           listeners: listeners as ListenerType[],
         })
       );
+      await this.updateCaddyConfig();
       return accessKeyJson;
     } catch (error) {
       logging.error(error);
@@ -595,6 +608,7 @@ export class ShadowsocksManagerService {
         configData.listenersForNewAccessKeys.udp = { port };
       }
       this.serverConfig.write();
+      await this.updateCaddyConfig();
       res.send(HttpSuccess.NO_CONTENT);
       next();
     } catch (error) {
@@ -683,6 +697,27 @@ export class ShadowsocksManagerService {
             new restifyErrors.InvalidArgumentError({statusCode: 400}, 'WebSocket packet path must start with /')
           );
         }
+        const wsPacketPort = listeners.websocketPacket.webServerPort;
+        if (wsPacketPort !== undefined) {
+          if (typeof wsPacketPort !== 'number' || wsPacketPort < 1 || wsPacketPort > 65535) {
+            return next(
+              new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid WebSocket server port')
+            );
+          }
+        }
+      }
+
+      if (
+        listeners.websocketStream?.webServerPort !== undefined &&
+        listeners.websocketPacket?.webServerPort !== undefined &&
+        listeners.websocketStream.webServerPort !== listeners.websocketPacket.webServerPort
+      ) {
+        return next(
+          new restifyErrors.InvalidArgumentError(
+            {statusCode: 400},
+            'WebSocket stream and packet listeners must share the same web server port'
+          )
+        );
       }
 
       // Store the listeners configuration
@@ -696,8 +731,18 @@ export class ShadowsocksManagerService {
           await this.accessKeys.setPortForNewAccessKeys(listeners.tcp.port);
         }
       }
-      
+
+      // Update the underlying Shadowsocks server with the new listener defaults.
+      const listenerSettings =
+        listeners.websocketStream || listeners.websocketPacket
+          ? {
+              websocketStream: listeners.websocketStream,
+              websocketPacket: listeners.websocketPacket,
+            }
+          : undefined;
+      this.shadowsocksServer.configureListeners?.(listenerSettings);
       this.serverConfig.write();
+      await this.updateCaddyConfig();
       res.send(HttpSuccess.NO_CONTENT);
       next();
     } catch (error) {
@@ -759,19 +804,14 @@ export class ShadowsocksManagerService {
       if (configData) {
         configData.caddyWebServer = {
           enabled: config.enabled ?? false,
-          adminEndpoint: config.adminEndpoint || 'localhost:2019',
           autoHttps: config.autoHttps ?? false,
           email: config.email,
           domain: config.domain
         };
-
-        // If enabled and we have WebSocket listeners, configure Caddy
-        if (config.enabled && configData.listenersForNewAccessKeys?.websocketStream) {
-          await this.configureCaddyRoutes();
-        }
       }
 
       this.serverConfig.write();
+      await this.updateCaddyConfig();
       res.send(HttpSuccess.NO_CONTENT);
       next();
     } catch (error) {
@@ -780,108 +820,17 @@ export class ShadowsocksManagerService {
     }
   }
 
-  // Helper method to configure Caddy routes via its API
-  private async configureCaddyRoutes(): Promise<void> {
-    const configData = this.serverConfig.data();
-    const caddyConfig = configData?.caddyWebServer;
-    const listeners = configData?.listenersForNewAccessKeys;
-    
-    if (!caddyConfig?.enabled || !listeners) {
-      return;
-    }
-
-    const adminEndpoint = caddyConfig.adminEndpoint || 'localhost:2019';
-    const domain = caddyConfig.domain || configData?.hostname;
-    
-    // Build Caddy configuration
-    const paths: string[] = [];
-    if (listeners.websocketStream?.path) {
-      paths.push(listeners.websocketStream.path);
-    }
-    if (listeners.websocketPacket?.path) {
-      paths.push(listeners.websocketPacket.path);
-    }
-
-    if (paths.length === 0) {
-      return;
-    }
-
-    const wsPort = listeners.websocketStream?.webServerPort || 8080;
-    
-    const caddyServerConfig = {
-      listen: [':443'],
-      routes: [{
-        match: [{ path: paths }],
-        handle: [{
-          handler: 'reverse_proxy',
-          upstreams: [{ dial: `localhost:${wsPort}` }],
-          headers: {
-            request: {
-              set: {
-                'Upgrade': ['websocket'],
-                'Connection': ['Upgrade']
-              }
-            }
-          }
-        }]
-      }]
-    };
-
-    // Add automatic HTTPS if configured
-    type CaddyServerConfigType = typeof caddyServerConfig & {
-      automatic_https?: {
-        email?: string;
-      };
-    };
-    const configWithHttps = caddyServerConfig as CaddyServerConfigType;
-    if (caddyConfig.autoHttps && domain) {
-      configWithHttps.automatic_https = {
-        email: caddyConfig.email
-      };
-    }
-
-    // Send configuration to Caddy via its admin API
-    try {
-      const data = JSON.stringify(configWithHttps);
-      
-      const options = {
-        hostname: adminEndpoint.split(':')[0],
-        port: parseInt(adminEndpoint.split(':')[1] || '2019'),
-        path: `/config/apps/http/servers/outline`,
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': data.length
-        }
-      };
-
-      await new Promise((resolve, reject) => {
-        const req = http.request(options, (res) => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(true);
-          } else {
-            reject(new Error(`Caddy API returned status ${res.statusCode}`));
-          }
-        });
-        
-        req.on('error', reject);
-        req.write(data);
-        req.end();
-      });
-      
-      logging.info('Successfully configured Caddy web server');
-    } catch (error) {
-      logging.error(`Failed to configure Caddy: ${error}`);
-      throw error;
-    }
-  }
-
   // Removes an existing access key
-  removeAccessKey(req: RequestType, res: ResponseType, next: restify.Next): void {
+  async removeAccessKey(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
     try {
       logging.debug(`removeAccessKey request ${JSON.stringify(req.params)}`);
       const accessKeyId = validateAccessKeyId(req.params.id);
       this.accessKeys.removeAccessKey(accessKeyId);
+      await this.updateCaddyConfig();
       res.send(HttpSuccess.NO_CONTENT);
       return next();
     } catch (error) {
@@ -1080,5 +1029,26 @@ export class ShadowsocksManagerService {
     }
     res.send(HttpSuccess.NO_CONTENT);
     next();
+  }
+
+  private async updateCaddyConfig(): Promise<void> {
+    if (!this.caddyServer) {
+      return;
+    }
+    const configData = this.serverConfig.data();
+    if (!configData) {
+      return;
+    }
+    try {
+      await this.caddyServer.applyConfig({
+        accessKeys: this.accessKeys.listAccessKeys(),
+        listeners: configData.listenersForNewAccessKeys,
+        caddyConfig: configData.caddyWebServer,
+        hostname: configData.hostname,
+      });
+    } catch (error) {
+      logging.error(`Failed to apply Caddy configuration: ${error}`);
+      throw error;
+    }
   }
 }

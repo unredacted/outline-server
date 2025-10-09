@@ -25,6 +25,7 @@ import {AccessKeyConfigJson, ServerAccessKeyRepository} from './server_access_ke
 import {ServerConfigJson} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
+import type {OutlineCaddyConfigPayload, OutlineCaddyController} from './outline_caddy_server';
 
 interface ServerInfo {
   name: string;
@@ -126,7 +127,7 @@ describe('ShadowsocksManagerService', () => {
   });
 
   describe('setHostnameForAccessKeys', () => {
-    it(`accepts valid hostnames`, (done) => {
+    it(`accepts valid hostnames`, async (done) => {
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
       const service = new ShadowsocksManagerServiceBuilder()
         .serverConfig(serverConfig)
@@ -151,13 +152,13 @@ describe('ShadowsocksManagerService', () => {
         '2606:2800:220:1:248:1893:25c8:1946',
       ];
       for (const hostname of goodHostnames) {
-        service.setHostnameForAccessKeys({params: {hostname}}, res, () => {});
+        await service.setHostnameForAccessKeys({params: {hostname}}, res, () => {});
       }
 
       responseProcessed = true;
       done();
     });
-    it(`rejects invalid hostnames`, (done) => {
+    it(`rejects invalid hostnames`, async (done) => {
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
       const service = new ShadowsocksManagerServiceBuilder()
         .serverConfig(serverConfig)
@@ -179,13 +180,13 @@ describe('ShadowsocksManagerService', () => {
         'gggg:ggg:220:1:248:1893:25c8:1946',
       ];
       for (const hostname of badHostnames) {
-        service.setHostnameForAccessKeys({params: {hostname}}, res, next);
+        await service.setHostnameForAccessKeys({params: {hostname}}, res, next);
       }
 
       responseProcessed = true;
       done();
     });
-    it("Changes the server's hostname", (done) => {
+    it("Changes the server's hostname", async (done) => {
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
       const service = new ShadowsocksManagerServiceBuilder()
         .serverConfig(serverConfig)
@@ -199,9 +200,9 @@ describe('ShadowsocksManagerService', () => {
           responseProcessed = true;
         },
       };
-      service.setHostnameForAccessKeys({params: {hostname}}, res, done);
+      await service.setHostnameForAccessKeys({params: {hostname}}, res, done);
     });
-    it('Rejects missing hostname', (done) => {
+    it('Rejects missing hostname', async (done) => {
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
       const service = new ShadowsocksManagerServiceBuilder()
         .serverConfig(serverConfig)
@@ -214,9 +215,9 @@ describe('ShadowsocksManagerService', () => {
         done();
       };
       const missingHostname = {params: {}} as {params: {hostname: string}};
-      service.setHostnameForAccessKeys(missingHostname, res, next);
+      await service.setHostnameForAccessKeys(missingHostname, res, next);
     });
-    it('Rejects non-string hostname', (done) => {
+    it('Rejects non-string hostname', async (done) => {
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
       const service = new ShadowsocksManagerServiceBuilder()
         .serverConfig(serverConfig)
@@ -756,6 +757,131 @@ describe('ShadowsocksManagerService', () => {
     });
   });
 
+  describe('setListenersForNewAccessKeys', () => {
+    it('persists configuration and updates the Shadowsocks server', async (done) => {
+      const repo = getAccessKeyRepository();
+      const serverConfig = new InMemoryConfig({} as ServerConfigJson);
+      const fakeServer = new FakeShadowsocksServer();
+      const fakeCaddy = new FakeOutlineCaddyServer();
+      const service = new ShadowsocksManagerServiceBuilder()
+        .serverConfig(serverConfig)
+        .accessKeys(repo)
+        .shadowsocksServer(fakeServer)
+        .caddyServer(fakeCaddy)
+        .build();
+
+      const listeners = {
+        tcp: {port: 443},
+        udp: {port: 8443},
+        websocketStream: {path: '/stream', webServerPort: 8080},
+        websocketPacket: {path: '/packet', webServerPort: 8080},
+      };
+
+      const res = {
+        send: (httpCode) => {
+          expect(httpCode).toEqual(204);
+          responseProcessed = true;
+        },
+      };
+
+      await service.setListenersForNewAccessKeys({params: listeners}, res, () => {});
+
+      expect(serverConfig.data().listenersForNewAccessKeys).toEqual(listeners);
+      expect(fakeServer.getListenerSettings()).toEqual({
+        websocketStream: listeners.websocketStream,
+        websocketPacket: listeners.websocketPacket,
+      });
+      expect(fakeCaddy.applyCalls.length).toEqual(1);
+      expect(fakeCaddy.applyCalls[0].listeners).toEqual(listeners);
+      done();
+    });
+
+    it('clears WebSocket listener settings when they are removed', async (done) => {
+      const repo = getAccessKeyRepository();
+      const serverConfig = new InMemoryConfig({} as ServerConfigJson);
+      const fakeServer = new FakeShadowsocksServer();
+      const fakeCaddy = new FakeOutlineCaddyServer();
+      const service = new ShadowsocksManagerServiceBuilder()
+        .serverConfig(serverConfig)
+        .accessKeys(repo)
+        .shadowsocksServer(fakeServer)
+        .caddyServer(fakeCaddy)
+        .build();
+
+      const listenersWithWebsocket = {
+        tcp: {port: 443},
+        udp: {port: 443},
+        websocketStream: {path: '/tcp', webServerPort: 8080},
+        websocketPacket: {path: '/udp', webServerPort: 8080},
+      };
+      await service.setListenersForNewAccessKeys(
+        {params: listenersWithWebsocket},
+        {send: () => {}},
+        () => {}
+      );
+      expect(fakeServer.getListenerSettings()).toEqual({
+        websocketStream: listenersWithWebsocket.websocketStream,
+        websocketPacket: listenersWithWebsocket.websocketPacket,
+      });
+
+      const listenersWithoutWebsocket = {
+        tcp: {port: 9090},
+        udp: {port: 9090},
+      };
+      const res = {
+        send: (httpCode) => {
+          expect(httpCode).toEqual(204);
+          responseProcessed = true;
+        },
+      };
+      await service.setListenersForNewAccessKeys(
+        {params: listenersWithoutWebsocket},
+        res,
+        () => {}
+      );
+
+      expect(serverConfig.data().listenersForNewAccessKeys).toEqual(listenersWithoutWebsocket);
+      expect(fakeServer.getListenerSettings()).toBeUndefined();
+      expect(fakeCaddy.applyCalls.length).toEqual(2);
+      expect(fakeCaddy.applyCalls[1].listeners).toEqual(listenersWithoutWebsocket);
+      done();
+    });
+  });
+
+  describe('configureCaddyWebServer', () => {
+    it('stores configuration and applies it', async (done) => {
+      const repo = getAccessKeyRepository();
+      const serverConfig = new InMemoryConfig({} as ServerConfigJson);
+      const fakeCaddy = new FakeOutlineCaddyServer();
+      const service = new ShadowsocksManagerServiceBuilder()
+        .serverConfig(serverConfig)
+        .accessKeys(repo)
+        .caddyServer(fakeCaddy)
+        .build();
+
+      const config = {
+        enabled: true,
+        autoHttps: true,
+        email: 'admin@example.com',
+        domain: 'example.com',
+      };
+
+      const res = {
+        send: (httpCode) => {
+          expect(httpCode).toEqual(204);
+          responseProcessed = true;
+        },
+      };
+
+      await service.configureCaddyWebServer({params: config}, res, () => {});
+
+      expect(serverConfig.data().caddyWebServer).toEqual(config);
+      expect(fakeCaddy.applyCalls.length).toEqual(1);
+      expect(fakeCaddy.applyCalls[0].caddyConfig).toEqual(config);
+      done();
+    });
+  });
+
   describe('removeAccessKey', () => {
     it('removes keys', async (done) => {
       const repo = getAccessKeyRepository();
@@ -1214,6 +1340,22 @@ describe('convertTimeRangeToHours', () => {
   });
 });
 
+class FakeOutlineCaddyServer {
+  public applyCalls: OutlineCaddyConfigPayload[] = [];
+  public shouldFail = false;
+
+  async applyConfig(payload: OutlineCaddyConfigPayload): Promise<void> {
+    this.applyCalls.push(payload);
+    if (this.shouldFail) {
+      throw new Error('applyConfig failure');
+    }
+  }
+
+  async stop(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 class ShadowsocksManagerServiceBuilder {
   private defaultServerName_ = 'default name';
   private serverConfig_: JsonConfig<ServerConfigJson> = null;
@@ -1221,6 +1363,7 @@ class ShadowsocksManagerServiceBuilder {
   private shadowsocksServer_: ShadowsocksServer = null;
   private managerMetrics_: ManagerMetrics = null;
   private metricsPublisher_: SharedMetricsPublisher = null;
+  private caddyServer_: OutlineCaddyController = new FakeOutlineCaddyServer();
 
   defaultServerName(name: string): ShadowsocksManagerServiceBuilder {
     this.defaultServerName_ = name;
@@ -1252,6 +1395,11 @@ class ShadowsocksManagerServiceBuilder {
     return this;
   }
 
+  caddyServer(server: OutlineCaddyController): ShadowsocksManagerServiceBuilder {
+    this.caddyServer_ = server;
+    return this;
+  }
+
   build(): ShadowsocksManagerService {
     return new ShadowsocksManagerService(
       this.defaultServerName_,
@@ -1259,7 +1407,8 @@ class ShadowsocksManagerServiceBuilder {
       this.accessKeys_,
       this.shadowsocksServer_,
       this.managerMetrics_,
-      this.metricsPublisher_
+      this.metricsPublisher_,
+      this.caddyServer_
     );
   }
 }
