@@ -20,17 +20,22 @@ requires:
 tasks:
   download_xcaddy:
     desc: Download xcaddy
-    requires: {vars: [TARGET_DIR]}
+    requires: {vars: [TARGET_DIR, XCADDY_OS, XCADDY_ARCH]}
     vars:
       XCADDY_VERSION: v0.4.5
-      XCADDY_FILE: '{{if eq .GOARCH "amd64"}}xcaddy_{{.XCADDY_VERSION}}_{{OS}}_x86_64{{else}}xcaddy_{{.XCADDY_VERSION}}_{{OS}}_{{.GOARCH}}{{end}}.tar.gz'
+      XCADDY_VERSION_NUMBER: '{{trimPrefix .XCADDY_VERSION "v"}}'
+      XCADDY_FILE: 'xcaddy_{{.XCADDY_VERSION_NUMBER}}_{{.XCADDY_OS}}_{{.XCADDY_ARCH}}{{if eq .XCADDY_OS "windows"}}.zip{{else}}.tar.gz{{end}}'
       XCADDY_URL: 'https://github.com/caddyserver/xcaddy/releases/download/{{.XCADDY_VERSION}}/{{.XCADDY_FILE}}'
     cmds:
       - mkdir -p '{{.TARGET_DIR}}'
       - |
         tmpdir=$(mktemp -d)
-        curl -fsSL '{{.XCADDY_URL}}' -o "$tmpdir/xcaddy.tgz"
-        tar -xzf "$tmpdir/xcaddy.tgz" -C '{{.TARGET_DIR}}' xcaddy
+        curl -fsSL '{{.XCADDY_URL}}' -o "$tmpdir/xcaddy.pkg"
+        {{- if eq .XCADDY_OS "windows" }}
+        unzip -oq "$tmpdir/xcaddy.pkg" -d '{{.TARGET_DIR}}'
+        {{- else }}
+        tar -xzf "$tmpdir/xcaddy.pkg" -C '{{.TARGET_DIR}}' xcaddy
+        {{- end }}
         rm -rf "$tmpdir"
       - chmod +x '{{joinPath .TARGET_DIR "xcaddy"}}'
 
@@ -59,6 +64,8 @@ tasks:
       - task: download_xcaddy
         vars:
           TARGET_DIR: '{{.BIN_DIR}}'
+          XCADDY_OS: '{{.TARGET_OS}}'
+          XCADDY_ARCH: '{{.GOARCH}}'
       - |
         '{{joinPath .BIN_DIR "xcaddy"}}' build --output '{{joinPath .BIN_DIR "outline-caddy"}}' \
           --with github.com/Jigsaw-Code/outline-ss-server/outlinecaddy@v0.0.1 \
