@@ -5,10 +5,9 @@ go 1.23
 toolchain go1.24.5
 
 require (
-	github.com/Jigsaw-Code/outline-ss-server v1.9.2
-	github.com/Jigsaw-Code/outline-ss-server/outlinecaddy v0.0.1
-	github.com/go-task/task/v3 v3.36.0
-	github.com/google/addlicense v1.1.1
+    github.com/Jigsaw-Code/outline-ss-server v1.9.2
+    github.com/go-task/task/v3 v3.36.0
+    github.com/google/addlicense v1.1.1
 )
 
 require (

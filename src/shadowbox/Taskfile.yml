@@ -18,6 +18,22 @@ requires:
   vars: [OUTPUT_BASE]
 
 tasks:
+  download_xcaddy:
+    desc: Download xcaddy
+    requires: {vars: [TARGET_DIR]}
+    vars:
+      XCADDY_VERSION: v0.4.5
+      XCADDY_FILE: '{{if eq .GOARCH "amd64"}}xcaddy_{{.XCADDY_VERSION}}_{{OS}}_x86_64{{else}}xcaddy_{{.XCADDY_VERSION}}_{{OS}}_{{.GOARCH}}{{end}}.tar.gz'
+      XCADDY_URL: 'https://github.com/caddyserver/xcaddy/releases/download/{{.XCADDY_VERSION}}/{{.XCADDY_FILE}}'
+    cmds:
+      - mkdir -p '{{.TARGET_DIR}}'
+      - |
+        tmpdir=$(mktemp -d)
+        curl -fsSL '{{.XCADDY_URL}}' -o "$tmpdir/xcaddy.tgz"
+        tar -xzf "$tmpdir/xcaddy.tgz" -C '{{.TARGET_DIR}}' xcaddy
+        rm -rf "$tmpdir"
+      - chmod +x '{{joinPath .TARGET_DIR "xcaddy"}}'
+
   build:
     desc: Build the Outline Server Node.js app
     vars:
@@ -40,7 +56,14 @@ tasks:
         vars: {TARGET_DIR: '{{.BIN_DIR}}'}
       # Set CGO_ENABLED=0 to force static linkage. See https://mt165.co.uk/blog/static-link-go/.
       - GOOS={{.TARGET_OS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -ldflags='-s -w -X main.version=embedded' -o '{{.BIN_DIR}}/' github.com/Jigsaw-Code/outline-ss-server/cmd/outline-ss-server
-      - GOOS={{.TARGET_OS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -tags='nomysql' -ldflags='-s -w' -o '{{.BIN_DIR}}/outline-caddy' github.com/Jigsaw-Code/outline-ss-server/outlinecaddy/cmd/caddy
+      - task: download_xcaddy
+        vars:
+          TARGET_DIR: '{{.BIN_DIR}}'
+      - |
+        '{{joinPath .BIN_DIR "xcaddy"}}' build --output '{{joinPath .BIN_DIR "outline-caddy"}}' \
+          --with github.com/Jigsaw-Code/outline-ss-server/outlinecaddy@v0.0.1 \
+          --with github.com/iamd3vil/caddy_yaml_adapter@v0.0.0-20200503183711-d479c29b475a \
+          --with github.com/mholt/caddy-l4@v0.0.0-20250102174933-6e5f5e311ead
 
   start:
     desc: Run the Outline server locally

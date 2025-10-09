@@ -4,8 +4,6 @@ github.com/Jigsaw-Code/outline-sdk/x v0.0.2-0.20250304133713-52f1a365e5ed h1:Nfy
 github.com/Jigsaw-Code/outline-sdk/x v0.0.2-0.20250304133713-52f1a365e5ed/go.mod h1:aFUEz6Z/eD0NS3c3fEIX+JO2D9aIrXCmWTb1zJFlItw=
 github.com/Jigsaw-Code/outline-ss-server v1.9.2 h1:8AlzPLugCCa9H4ZIV79rWOdgVshRzKZalq8ZD+APjqk=
 github.com/Jigsaw-Code/outline-ss-server v1.9.2/go.mod h1:v0jS3ExOGwGTbWTpOw16/sid91k7PKxazdK9eLCpUlQ=
-github.com/Jigsaw-Code/outline-ss-server/outlinecaddy v0.0.1 h1:V6XDwphZ0UAf7YUte4NsM48j6o6Cd4p9LaGLxUTSv0A=
-github.com/Jigsaw-Code/outline-ss-server/outlinecaddy v0.0.1/go.mod h1:57uq2C5kK9iIHhokI/9/Vx4E5Q4CL61GCU/DbFWj7fg=
 github.com/Masterminds/semver/v3 v3.3.1 h1:QtNSWtVZ3nBfk8mAOu/B6v7FMJ+NHTIgUPi7rj+4nv4=
 github.com/Masterminds/semver/v3 v3.3.1/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/caddyserver/caddy/v2 v2.9.1 h1:OEYiZ7DbCzAWVb6TNEkjRcSCRGHVoZsJinoDR/n9oaY=
