@@ -137,9 +137,11 @@ export class OutlineCaddyServer implements OutlineCaddyController {
       };
 
       proc.once('error', onSpawnError);
-
-      this.process = proc;
-      setImmediate(() => resolve());
+      proc.once('spawn', () => {
+        this.process = proc;
+        proc.off('error', onSpawnError);
+        resolve();
+      });
 
       proc.stdout?.on('data', (data: Buffer) => {
         logging.info(`[outline-caddy] ${data.toString().trimEnd()}`);

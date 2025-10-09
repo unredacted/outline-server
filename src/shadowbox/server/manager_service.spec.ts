@@ -1340,9 +1340,9 @@ describe('convertTimeRangeToHours', () => {
   });
 });
 
-class FakeOutlineCaddyServer {
-  public applyCalls: OutlineCaddyConfigPayload[] = [];
-  public shouldFail = false;
+class FakeOutlineCaddyServer implements OutlineCaddyController {
+  applyCalls: OutlineCaddyConfigPayload[] = [];
+  shouldFail = false;
 
   async applyConfig(payload: OutlineCaddyConfigPayload): Promise<void> {
     this.applyCalls.push(payload);

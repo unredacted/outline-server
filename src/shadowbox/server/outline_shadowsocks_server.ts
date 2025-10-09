@@ -236,6 +236,14 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     const webServerId = 'outline-ws-server';
 
     type ListenerDescriptor = WebSocketListener | TcpUdpListener;
+    const isWebSocketListener = (
+      listener: ListenerDescriptor
+    ): listener is WebSocketListener => {
+      return (
+        listener.type === 'websocket-stream' || listener.type === 'websocket-packet'
+      );
+    };
+
     interface ServiceGroup {
       listeners: ListenerDescriptor[];
       keys: ShadowsocksAccessKeyWithListeners[];
@@ -300,7 +308,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
       const signatureParts = listenersForKey
         .map((listener) => {
-          if (listener.type === 'tcp' || listener.type === 'udp') {
+          if (!isWebSocketListener(listener)) {
             return `${listener.type}:${listener.address}`;
           }
           return `${listener.type}:${listener.path}`;
@@ -339,9 +347,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     for (const group of serviceGroups.values()) {
       const service: ServiceConfig = {
-        listeners: group.listeners.map((listener) => ({...listener})) as Array<
-          WebSocketListener | TcpUdpListener
-        >,
+        listeners: group.listeners.map((listener) => ({...listener})),
         keys: group.keys.map((k) => ({
           id: k.id,
           cipher: k.cipher,
