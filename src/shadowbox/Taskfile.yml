@@ -23,8 +23,10 @@ tasks:
     requires: {vars: [TARGET_DIR, XCADDY_OS, XCADDY_ARCH]}
     vars:
       XCADDY_VERSION: v0.4.5
-      XCADDY_VERSION_NUMBER: '{{trimPrefix .XCADDY_VERSION "v"}}'
-      XCADDY_FILE: 'xcaddy_{{.XCADDY_VERSION_NUMBER}}_{{.XCADDY_OS}}_{{.XCADDY_ARCH}}{{if eq .XCADDY_OS "windows"}}.zip{{else}}.tar.gz{{end}}'
+      XCADDY_VERSION_NUMBER: '{{replace .XCADDY_VERSION "v" ""}}'
+      XCADDY_ARCH_LABEL: '{{if eq .XCADDY_ARCH "x86_64"}}amd64{{else if eq .XCADDY_ARCH "arm64"}}arm64{{else if eq .XCADDY_ARCH "armv6"}}armv6{{else if eq .XCADDY_ARCH "armv7"}}armv7{{else}}{{.XCADDY_ARCH}}{{end}}'
+      XCADDY_OS_LABEL: '{{if eq .XCADDY_OS "darwin"}}mac{{else}}{{.XCADDY_OS}}{{end}}'
+      XCADDY_FILE: 'xcaddy_{{.XCADDY_VERSION_NUMBER}}_{{.XCADDY_OS_LABEL}}_{{.XCADDY_ARCH_LABEL}}{{if eq .XCADDY_OS_LABEL "windows"}}.zip{{else}}.tar.gz{{end}}'
       XCADDY_URL: 'https://github.com/caddyserver/xcaddy/releases/download/{{.XCADDY_VERSION}}/{{.XCADDY_FILE}}'
     cmds:
       - mkdir -p '{{.TARGET_DIR}}'
@@ -37,7 +39,10 @@ tasks:
         tar -xzf "$tmpdir/xcaddy.pkg" -C '{{.TARGET_DIR}}' xcaddy
         {{- end }}
         rm -rf "$tmpdir"
-      - chmod +x '{{joinPath .TARGET_DIR "xcaddy"}}'
+      - |
+        {{- if ne .XCADDY_OS_LABEL "windows" -}}
+        chmod +x '{{joinPath .TARGET_DIR "xcaddy"}}'
+        {{- end -}}
 
   build:
     desc: Build the Outline Server Node.js app
