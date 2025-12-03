@@ -75,7 +75,7 @@ tasks:
         '{{joinPath .BIN_DIR "xcaddy"}}' build --output '{{joinPath .BIN_DIR "outline-caddy"}}' \
           --with github.com/Jigsaw-Code/outline-ss-server/outlinecaddy@v0.0.1 \
           --with github.com/iamd3vil/caddy_yaml_adapter@v0.0.0-20200503183711-d479c29b475a \
-          --with github.com/mholt/caddy-l4@v0.0.0-20250102174933-6e5f5e311ead
+          --with github.com/mholt/caddy-l4@v0.0.0-20251201210923-0c96591f5650
 
   start:
     desc: Run the Outline server locally
