@@ -115,6 +115,69 @@ The Outline Server provides a REST API for access key management. If you know th
 
    Consult the [OpenAPI spec](./server/api.yml) and [documentation](https://redocly.github.io/redoc/?url=https://raw.githubusercontent.com/Jigsaw-Code/outline-server/master/src/shadowbox/server/api.yml) for more options.
 
+## WebSocket Support (SS over WSS)
+
+The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improved censorship resistance. This tunnels Shadowsocks traffic over WebSocket connections, making it look like regular HTTPS web traffic.
+
+### Enabling WebSocket Support
+
+1. **Configure Listeners for New Access Keys:**
+
+   Set up listener configuration including WebSocket paths:
+
+   ```sh
+   curl --insecure -X PUT -H "Content-Type: application/json" \
+     -d '{
+       "tcp": {"port": 443},
+       "udp": {"port": 443},
+       "websocketStream": {"path": "/tcp", "webServerPort": 8080},
+       "websocketPacket": {"path": "/udp", "webServerPort": 8080}
+     }' \
+     $API_URL/server/listeners-for-new-access-keys
+   ```
+
+2. **Enable the Caddy Web Server (for automatic HTTPS):**
+
+   ```sh
+   curl --insecure -X PUT -H "Content-Type: application/json" \
+     -d '{
+       "enabled": true,
+       "autoHttps": true,
+       "email": "admin@example.com",
+       "domain": "your-domain.com"
+     }' \
+     $API_URL/server/web-server
+   ```
+
+3. **Create WebSocket-Enabled Access Keys:**
+
+   ```sh
+   curl --insecure -X POST -H "Content-Type: application/json" \
+     -d '{
+       "name": "WebSocket User",
+       "listeners": ["tcp", "udp", "websocket-stream", "websocket-packet"]
+     }' \
+     $API_URL/access-keys
+   ```
+
+4. **Get Dynamic Client Configuration:**
+
+   For WebSocket-enabled keys, retrieve the YAML configuration:
+
+   ```sh
+   curl --insecure $API_URL/access-keys/0/dynamic-config
+   ```
+
+### Listener Types
+
+- `tcp` - Traditional TCP Shadowsocks
+- `udp` - Traditional UDP Shadowsocks
+- `websocket-stream` - TCP over WebSocket (for TCP traffic tunneling)
+- `websocket-packet` - UDP over WebSocket (for UDP traffic tunneling)
+
+> [!NOTE]
+> WebSocket support requires a reverse proxy (like Caddy, Nginx, or Cloudflare Tunnel) in front of the internal WebSocket server port (default: 8080) to handle TLS termination and external traffic.
+
 ## Testing
 
 ### Manual
