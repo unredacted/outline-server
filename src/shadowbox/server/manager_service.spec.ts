@@ -1358,7 +1358,9 @@ class FakeOutlineCaddyServer implements OutlineCaddyController {
 
 class ShadowsocksManagerServiceBuilder {
   private defaultServerName_ = 'default name';
-  private serverConfig_: JsonConfig<ServerConfigJson> = null;
+  private serverConfig_: JsonConfig<ServerConfigJson> = new InMemoryConfig<ServerConfigJson>(
+    {} as ServerConfigJson
+  );
   private accessKeys_: AccessKeyRepository = null;
   private shadowsocksServer_: ShadowsocksServer = null;
   private managerMetrics_: ManagerMetrics = null;
