@@ -45,6 +45,17 @@ const EXPECTED_ACCESS_KEY_PROPERTIES = [
   'listeners',
 ].sort();
 
+// Keys created directly via repo don't have listeners set
+const EXPECTED_ACCESS_KEY_PROPERTIES_WITHOUT_LISTENERS = [
+  'id',
+  'name',
+  'password',
+  'port',
+  'method',
+  'accessUrl',
+  'dataLimit',
+].sort();
+
 const SEND_NOTHING = (_httpCode, _data) => {};
 
 describe('ShadowsocksManagerService', () => {
@@ -299,8 +310,12 @@ describe('ShadowsocksManagerService', () => {
           expect(data.accessKeys.length).toEqual(2);
           const serviceAccessKey1 = data.accessKeys[0];
           const serviceAccessKey2 = data.accessKeys[1];
-          expect(Object.keys(serviceAccessKey1).sort()).toEqual(EXPECTED_ACCESS_KEY_PROPERTIES);
-          expect(Object.keys(serviceAccessKey2).sort()).toEqual(EXPECTED_ACCESS_KEY_PROPERTIES);
+          expect(Object.keys(serviceAccessKey1).sort()).toEqual(
+            EXPECTED_ACCESS_KEY_PROPERTIES_WITHOUT_LISTENERS
+          );
+          expect(Object.keys(serviceAccessKey2).sort()).toEqual(
+            EXPECTED_ACCESS_KEY_PROPERTIES_WITHOUT_LISTENERS
+          );
           expect(serviceAccessKey1.name).toEqual(accessKeyName);
           responseProcessed = true; // required for afterEach to pass.
         },
