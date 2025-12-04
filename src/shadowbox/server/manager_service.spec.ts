@@ -330,7 +330,7 @@ describe('ShadowsocksManagerService', () => {
 
     describe('handling the access key identifier', () => {
       describe("with 'createNewAccessKey'", () => {
-        it('generates a unique ID', () => {
+        it('generates a unique ID', async () => {
           const res = {
             send: (httpCode, data) => {
               expect(httpCode).toEqual(201);
@@ -338,7 +338,7 @@ describe('ShadowsocksManagerService', () => {
               responseProcessed = true; // required for afterEach to pass.
             },
           };
-          service.createNewAccessKey({params: {}}, res, () => {});
+          await service.createNewAccessKey({params: {}}, res, () => {});
         });
         it('rejects requests with ID parameter set', () => {
           const res = {send: (_httpCode, _data) => {}};
@@ -367,12 +367,12 @@ describe('ShadowsocksManagerService', () => {
         it('rejects if key exists', async () => {
           const accessKey = await repo.createNewAccessKey();
           const res = {send: (_httpCode, _data) => {}};
-          service.createAccessKey({params: {id: accessKey.id}}, res, (error) => {
+          await service.createAccessKey({params: {id: accessKey.id}}, res, (error) => {
             expect(error.statusCode).toEqual(409);
             responseProcessed = true; // required for afterEach to pass.
           });
         });
-        it('creates key with provided ID', () => {
+        it('creates key with provided ID', async () => {
           const res = {
             send: (httpCode, data) => {
               expect(httpCode).toEqual(201);
@@ -380,7 +380,7 @@ describe('ShadowsocksManagerService', () => {
               responseProcessed = true; // required for afterEach to pass.
             },
           };
-          service.createAccessKey({params: {id: 'myKeyId'}}, res, () => {});
+          await service.createAccessKey({params: {id: 'myKeyId'}}, res, () => {});
         });
       });
     });
@@ -583,12 +583,15 @@ describe('ShadowsocksManagerService', () => {
 
         it('rejects port numbers already in use', async () => {
           const server = new net.Server();
-          server.listen(NEW_PORT, async () => {
-            const res = {send: SEND_NOTHING};
-            await serviceMethod({params: {id: accessKeyId, port: NEW_PORT}}, res, (error) => {
-              expect(error.statusCode).toEqual(409);
-              responseProcessed = true; // required for afterEach to pass.
-              server.close();
+          await new Promise<void>((resolve) => {
+            server.listen(NEW_PORT, async () => {
+              const res = {send: SEND_NOTHING};
+              await serviceMethod({params: {id: accessKeyId, port: NEW_PORT}}, res, (error) => {
+                expect(error.statusCode).toEqual(409);
+                responseProcessed = true; // required for afterEach to pass.
+                server.close();
+                resolve();
+              });
             });
           });
         });
@@ -685,9 +688,12 @@ describe('ShadowsocksManagerService', () => {
       };
 
       const server = new net.Server();
-      server.listen(NEW_PORT, async () => {
-        await service.setPortForNewAccessKeys({params: {port: NEW_PORT}}, res, next);
-        server.close();
+      await new Promise<void>((resolve) => {
+        server.listen(NEW_PORT, async () => {
+          await service.setPortForNewAccessKeys({params: {port: NEW_PORT}}, res, next);
+          server.close();
+          resolve();
+        });
       });
     });
 
@@ -709,9 +715,12 @@ describe('ShadowsocksManagerService', () => {
       };
 
       const firstKeyConnection = new net.Server();
-      firstKeyConnection.listen(OLD_PORT, async () => {
-        await service.setPortForNewAccessKeys({params: {port: OLD_PORT}}, res, () => {});
-        firstKeyConnection.close();
+      await new Promise<void>((resolve) => {
+        firstKeyConnection.listen(OLD_PORT, async () => {
+          await service.setPortForNewAccessKeys({params: {port: OLD_PORT}}, res, () => {});
+          firstKeyConnection.close();
+          resolve();
+        });
       });
     });
 
@@ -888,7 +897,7 @@ describe('ShadowsocksManagerService', () => {
         },
       };
       // remove the 1st key.
-      service.removeAccessKey({params: {id: key1.id}}, res, () => {});
+      await service.removeAccessKey({params: {id: key1.id}}, res, () => {});
     });
     it('Remove returns a 500 when the repository throws an exception', async () => {
       const repo = getAccessKeyRepository();
