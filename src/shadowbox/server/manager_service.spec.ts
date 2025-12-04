@@ -42,6 +42,7 @@ const EXPECTED_ACCESS_KEY_PROPERTIES = [
   'method',
   'accessUrl',
   'dataLimit',
+  'listeners',
 ].sort();
 
 const SEND_NOTHING = (_httpCode, _data) => {};
@@ -771,8 +772,8 @@ describe('ShadowsocksManagerService', () => {
         .build();
 
       const listeners = {
-        tcp: {port: 443},
-        udp: {port: 8443},
+        tcp: {port: 8443},
+        udp: {port: 9443},
         websocketStream: {path: '/stream', webServerPort: 8080},
         websocketPacket: {path: '/packet', webServerPort: 8080},
       };
@@ -809,8 +810,8 @@ describe('ShadowsocksManagerService', () => {
         .build();
 
       const listenersWithWebsocket = {
-        tcp: {port: 443},
-        udp: {port: 443},
+        tcp: {port: 8443},
+        udp: {port: 8443},
         websocketStream: {path: '/tcp', webServerPort: 8080},
         websocketPacket: {path: '/udp', webServerPort: 8080},
       };
