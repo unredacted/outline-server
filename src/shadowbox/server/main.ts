@@ -165,10 +165,10 @@ async function main() {
   }
   const caddyServer = new OutlineCaddyServer(
     getBinaryFilename('outline-caddy'),
-    getPersistentFilename('outline-caddy/config.json'),
+    getPersistentFilename('outline-caddy/config.yaml'),
     verbose
   );
-  
+
   // Configure listener defaults (e.g., WebSocket paths/ports) based on server configuration.
   const listenersConfig = serverConfig.data().listenersForNewAccessKeys;
   shadowsocksServer.configureListeners(

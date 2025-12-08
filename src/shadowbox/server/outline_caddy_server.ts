@@ -16,6 +16,7 @@ import * as child_process from 'child_process';
 import * as path from 'path';
 
 import * as mkdirp from 'mkdirp';
+import * as yaml from 'js-yaml';
 
 import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
@@ -76,15 +77,15 @@ export class OutlineCaddyServer implements OutlineCaddyController {
     }
 
     const configObject = this.buildConfig(payload, listenerSettings, websocketKeys);
-    const configJson = JSON.stringify(configObject, null, 2);
-    if (configJson === this.currentConfigHash) {
+    const configYaml = yaml.dump(configObject);
+    if (configYaml === this.currentConfigHash) {
       // No changes; nothing to do.
       return;
     }
 
     mkdirp.sync(path.dirname(this.configFilename));
-    file.atomicWriteFileSync(this.configFilename, configJson);
-    this.currentConfigHash = configJson;
+    file.atomicWriteFileSync(this.configFilename, configYaml);
+    this.currentConfigHash = configYaml;
     this.shouldRun = true;
     await this.ensureStarted();
   }
@@ -122,7 +123,7 @@ export class OutlineCaddyServer implements OutlineCaddyController {
 
   private start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const args = ['run', '--config', this.configFilename, '--adapter', 'json', '--watch'];
+      const args = ['run', '--config', this.configFilename, '--adapter', 'yaml', '--watch'];
       logging.info(`Starting outline-caddy with command: ${this.binaryFilename} ${args.join(' ')}`);
       const proc = child_process.spawn(this.binaryFilename, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -216,9 +217,7 @@ export class OutlineCaddyServer implements OutlineCaddyController {
       autoHttps = false;
     }
     const domain = requestedDomain;
-    const listenAddresses = autoHttps
-      ? [':80', ':443']
-      : [`:${listenerSettings.listenPort}`];
+    const listenAddresses = autoHttps ? [':80', ':443'] : [`:${listenerSettings.listenPort}`];
 
     const hasStreamRoute =
       websocketKeys.length === 0 ||
