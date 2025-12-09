@@ -233,12 +233,16 @@ async function main() {
     serverConfig.data().accessKeyDataLimit
   );
 
+  // Determine if API should be proxied through Caddy
+  const apiProxyEnabled = !!serverConfig.data().caddyWebServer?.apiProxyPath;
+
   try {
     await caddyServer.applyConfig({
       accessKeys: accessKeyRepository.listAccessKeys(),
       listeners: serverConfig.data().listenersForNewAccessKeys,
       caddyConfig: serverConfig.data().caddyWebServer,
       hostname: serverConfig.data().hostname,
+      apiPort: apiProxyEnabled ? apiPortNumber : undefined,
     });
   } catch (error) {
     logging.error(`Failed to apply initial Caddy configuration: ${error}`);
@@ -266,6 +270,9 @@ async function main() {
 
   const certificateFilename = process.env.SB_CERTIFICATE_FILE;
   const privateKeyFilename = process.env.SB_PRIVATE_KEY_FILE;
+
+  // Create API server with HTTPS (self-signed cert)
+  // When apiProxyPath is set, Caddy also proxies to this with TLS verification disabled
   const apiServer = restify.createServer({
     certificate: fs.readFileSync(certificateFilename),
     key: fs.readFileSync(privateKeyFilename),
@@ -288,6 +295,7 @@ async function main() {
   apiServer.use(cors.actual);
   bindService(apiServer, apiPrefix, managerService);
 
+  // Listen on all interfaces
   apiServer.listen(apiPortNumber, () => {
     logging.info(`Manager listening at ${apiServer.url}${apiPrefix}`);
   });

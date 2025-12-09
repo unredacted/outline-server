@@ -35,8 +35,9 @@ export interface ListenersForNewAccessKeys {
 export interface CaddyWebServerConfig {
   enabled?: boolean;
   autoHttps?: boolean;
-  email?: string;  // For ACME
-  domain?: string;  // Domain for automatic HTTPS
+  email?: string; // For ACME
+  domain?: string; // Domain for automatic HTTPS
+  apiProxyPath?: string; // Path prefix for API proxy (e.g., "/api")
 }
 
 // Serialized format for the server config.
@@ -67,7 +68,7 @@ export interface ServerConfigJson {
   // Experimental configuration options that are expected to be short-lived.
   experimental?: {
     // Whether ASN metric annotation for Prometheus is enabled.
-    asnMetricsEnabled?: boolean;  // DEPRECATED
+    asnMetricsEnabled?: boolean; // DEPRECATED
   };
 }
 

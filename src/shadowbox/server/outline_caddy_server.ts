@@ -28,6 +28,7 @@ export interface OutlineCaddyConfigPayload {
   listeners?: ListenersForNewAccessKeys;
   caddyConfig?: CaddyWebServerConfig;
   hostname?: string;
+  apiPort?: number; // Internal API port for reverse proxy
 }
 
 export interface OutlineCaddyController {
@@ -234,6 +235,11 @@ export class OutlineCaddyServer implements OutlineCaddyController {
       routes.push(this.buildWebsocketRoute(listenerSettings.udpPath, 'packet', domain));
     }
 
+    // Add API proxy route if configured
+    if (caddyConfig?.apiProxyPath && payload.apiPort) {
+      routes.push(this.buildApiProxyRoute(caddyConfig.apiProxyPath, payload.apiPort, domain));
+    }
+
     const connectionHandler = {
       name: 'outline-ws',
       handle: {
@@ -332,6 +338,35 @@ export class OutlineCaddyServer implements OutlineCaddyController {
           handler: 'websocket2layer4',
           type,
           connection_handler: 'outline-ws',
+        },
+      ],
+    };
+  }
+
+  private buildApiProxyRoute(pathPrefix: string, apiPort: number, domain?: string) {
+    const normalizedPrefix = this.normalisePath(pathPrefix);
+    const match: Record<string, unknown> = {
+      path: [`${normalizedPrefix}/*`],
+    };
+    if (domain) {
+      match['host'] = [domain];
+    }
+    return {
+      match: [match],
+      handle: [
+        {
+          handler: 'rewrite',
+          strip_path_prefix: normalizedPrefix,
+        },
+        {
+          handler: 'reverse_proxy',
+          upstreams: [{dial: `localhost:${apiPort}`}],
+          transport: {
+            protocol: 'http',
+            tls: {
+              insecure_skip_verify: true, // Skip verification for self-signed cert
+            },
+          },
         },
       ],
     };

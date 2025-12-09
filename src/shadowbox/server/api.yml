@@ -761,6 +761,9 @@ components:
         domain:
           type: string
           description: Domain name for automatic HTTPS
+        apiProxyPath:
+          type: string
+          description: Path prefix for API reverse proxy (e.g., "/api"). When set, Caddy will proxy API requests with valid TLS.
 
     AccessKey:
       required:
