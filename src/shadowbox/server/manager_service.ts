@@ -830,13 +830,16 @@ export class ShadowsocksManagerService {
       // Store Caddy configuration
       const configData = this.serverConfig.data();
       if (configData) {
-        configData.caddyWebServer = {
+        const caddyConfig: CaddyWebServerConfig = {
           enabled: config.enabled ?? false,
           autoHttps: config.autoHttps ?? false,
           email: config.email,
           domain: config.domain,
-          apiProxyPath: config.apiProxyPath,
         };
+        if (config.apiProxyPath) {
+          caddyConfig.apiProxyPath = config.apiProxyPath;
+        }
+        configData.caddyWebServer = caddyConfig;
       }
 
       this.serverConfig.write();
