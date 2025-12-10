@@ -20,7 +20,11 @@ import * as path from 'path';
 import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
 import {ListenerType} from '../model/access_key';
-import {ListenerSettings, ShadowsocksAccessKey, ShadowsocksServer} from '../model/shadowsocks_server';
+import {
+  ListenerSettings,
+  ShadowsocksAccessKey,
+  ShadowsocksServer,
+} from '../model/shadowsocks_server';
 
 // Extended interface for access keys with listeners
 export interface ShadowsocksAccessKeyWithListeners extends ShadowsocksAccessKey {
@@ -132,12 +136,8 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       return this;
     }
 
-    const stream = listeners.websocketStream
-      ? {...listeners.websocketStream}
-      : undefined;
-    const packet = listeners.websocketPacket
-      ? {...listeners.websocketPacket}
-      : undefined;
+    const stream = listeners.websocketStream ? {...listeners.websocketStream} : undefined;
+    const packet = listeners.websocketPacket ? {...listeners.websocketPacket} : undefined;
 
     // If only one listener specifies the web server port, share it across both listeners.
     const sharedPort = stream?.webServerPort ?? packet?.webServerPort;
@@ -173,26 +173,26 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     return new Promise((resolve, reject) => {
       // Check if any key has WebSocket listeners
       const extendedKeys = keys as ShadowsocksAccessKeyWithListeners[];
-      
+
       // Debug logging
       logging.info(`Writing config for ${keys.length} keys`);
-      extendedKeys.forEach(key => {
+      extendedKeys.forEach((key) => {
         if (key.listeners) {
           logging.info(`Key ${key.id} has listeners: ${JSON.stringify(key.listeners)}`);
         }
       });
-      
-      const hasWebSocketKeys = extendedKeys.some(key => 
-        key.listeners && (
-          key.listeners.indexOf('websocket-stream') !== -1 || 
-          key.listeners.indexOf('websocket-packet') !== -1
-        )
+
+      const hasWebSocketKeys = extendedKeys.some(
+        (key) =>
+          key.listeners &&
+          (key.listeners.indexOf('websocket-stream') !== -1 ||
+            key.listeners.indexOf('websocket-packet') !== -1)
       );
-      
+
       logging.info(`WebSocket keys detected: ${hasWebSocketKeys}`);
-      
+
       let config: ServerConfig;
-      
+
       if (hasWebSocketKeys) {
         // Use new format with WebSocket support
         config = this.generateWebSocketConfig(extendedKeys);
@@ -236,12 +236,8 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
     const webServerId = 'outline-ws-server';
 
     type ListenerDescriptor = WebSocketListener | TcpUdpListener;
-    const isWebSocketListener = (
-      listener: ListenerDescriptor
-    ): listener is WebSocketListener => {
-      return (
-        listener.type === 'websocket-stream' || listener.type === 'websocket-packet'
-      );
+    const isWebSocketListener = (listener: ListenerDescriptor): listener is WebSocketListener => {
+      return listener.type === 'websocket-stream' || listener.type === 'websocket-packet';
     };
 
     interface ServiceGroup {
@@ -329,8 +325,7 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     const needsWebServer = Array.from(serviceGroups.values()).some((group) =>
       group.listeners.some(
-        (listener) =>
-          listener.type === 'websocket-stream' || listener.type === 'websocket-packet'
+        (listener) => listener.type === 'websocket-stream' || listener.type === 'websocket-packet'
       )
     );
 
@@ -361,48 +356,51 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
   }
 
   /**
-   * Generates dynamic access key YAML content for a specific access key with WebSocket support.
+   * Generates dynamic access key configuration as a JSON object for WebSocket-enabled keys.
+   * This object can be serialized to YAML for use with Outline Client v1.15.0+.
    * @param proxyParams The proxy parameters containing cipher and password
    * @param domain The WebSocket server domain
    * @param tcpPath The path for TCP over WebSocket
    * @param udpPath The path for UDP over WebSocket
    * @param tls Whether to use TLS (wss) or not (ws)
-   * @returns The YAML content as a string
+   * @param listeners Optional list of listener types to include
+   * @returns The configuration object, or null if no WebSocket listeners
    */
-  generateDynamicAccessKeyYaml(
+  generateDynamicAccessKeyConfig(
     proxyParams: {encryptionMethod: string; password: string},
     domain: string,
     tcpPath: string,
     udpPath: string,
     tls: boolean,
     listeners?: ListenerType[]
-  ): string | null {
+  ): Record<string, unknown> | null {
     if (!domain) {
       return null;
     }
 
-    const listenerSet = new Set<ListenerType>(listeners ?? ['websocket-stream', 'websocket-packet']);
+    const listenerSet = new Set<ListenerType>(
+      listeners ?? ['websocket-stream', 'websocket-packet']
+    );
     const includeStream = listenerSet.has('websocket-stream');
     const includePacket = listenerSet.has('websocket-packet');
 
     if (!includeStream && !includePacket) {
-      logging.warn('Dynamic access key requested without WebSocket listeners; skipping YAML output.');
+      logging.warn('Dynamic access key config requested without WebSocket listeners; skipping.');
       return null;
     }
 
     const protocol = tls ? 'wss' : 'ws';
-    const transportType =
-      includeStream && includePacket ? 'tcpudp' : includeStream ? 'tcp' : 'udp';
+    const transportType = includeStream && includePacket ? 'tcpudp' : includeStream ? 'tcp' : 'udp';
 
     const transport: Record<string, unknown> = {
-      '$type': transportType,
+      $type: transportType,
     };
 
     if (includeStream) {
       transport['tcp'] = {
-        '$type': 'shadowsocks',
+        $type: 'shadowsocks',
         endpoint: {
-          '$type': 'websocket',
+          $type: 'websocket',
           url: `${protocol}://${domain}${tcpPath}`,
         },
         cipher: proxyParams.encryptionMethod,
@@ -412,9 +410,9 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
 
     if (includePacket) {
       transport['udp'] = {
-        '$type': 'shadowsocks',
+        $type: 'shadowsocks',
         endpoint: {
-          '$type': 'websocket',
+          $type: 'websocket',
           url: `${protocol}://${domain}${udpPath}`,
         },
         cipher: proxyParams.encryptionMethod,
@@ -422,19 +420,49 @@ export class OutlineShadowsocksServer implements ShadowsocksServer {
       };
     }
 
-    const config = {
-      transport,
-    };
+    return {transport};
+  }
+
+  /**
+   * Generates dynamic access key YAML content for a specific access key with WebSocket support.
+   * @param proxyParams The proxy parameters containing cipher and password
+   * @param domain The WebSocket server domain
+   * @param tcpPath The path for TCP over WebSocket
+   * @param udpPath The path for UDP over WebSocket
+   * @param tls Whether to use TLS (wss) or not (ws)
+   * @param listeners Optional list of listener types to include
+   * @returns The YAML content as a string, or null if no WebSocket listeners
+   */
+  generateDynamicAccessKeyYaml(
+    proxyParams: {encryptionMethod: string; password: string},
+    domain: string,
+    tcpPath: string,
+    udpPath: string,
+    tls: boolean,
+    listeners?: ListenerType[]
+  ): string | null {
+    const config = this.generateDynamicAccessKeyConfig(
+      proxyParams,
+      domain,
+      tcpPath,
+      udpPath,
+      tls,
+      listeners
+    );
+
+    if (!config) {
+      return null;
+    }
 
     // Use specific YAML options to ensure proper formatting
     return jsyaml.dump(config, {
       indent: 2,
-      lineWidth: -1,  // Don't wrap long lines
-      noRefs: true,   // Don't use references
+      lineWidth: -1, // Don't wrap long lines
+      noRefs: true, // Don't use references
       sortKeys: false, // Preserve key order
       styles: {
-        '!!null': 'canonical' // Use ~ for null values
-      }
+        '!!null': 'canonical', // Use ~ for null values
+      },
     });
   }
 

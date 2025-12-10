@@ -786,3 +786,12 @@ components:
           items:
             type: string
             enum: ['tcp', 'udp', 'websocket-stream', 'websocket-packet']
+        dynamicConfig:
+          type: object
+          description: |
+            For WebSocket-enabled keys (requires Outline Client v1.15.0+), contains the 
+            dynamic access configuration as a JSON object. This should be converted to YAML
+            and hosted on a censorship-resistant platform (e.g., S3, Google Drive) for 
+            distribution via ssconf:// URLs. Only present when the key has websocket-stream 
+            or websocket-packet listeners and the server has a configured domain.
+          additionalProperties: true

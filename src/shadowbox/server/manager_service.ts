@@ -42,33 +42,10 @@ interface AccessKeyJson {
   dataLimit: DataLimit;
   accessUrl: string;
   listeners?: ListenerType[];
-}
-
-// Creates a AccessKey response.
-function accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
-  const result: AccessKeyJson = {
-    id: accessKey.id,
-    name: accessKey.name,
-    password: accessKey.proxyParams.password,
-    port: accessKey.proxyParams.portNumber,
-    method: accessKey.proxyParams.encryptionMethod,
-    dataLimit: accessKey.dataLimit,
-    accessUrl: SIP002_URI.stringify(
-      makeConfig({
-        host: accessKey.proxyParams.hostname,
-        port: accessKey.proxyParams.portNumber,
-        method: accessKey.proxyParams.encryptionMethod,
-        password: accessKey.proxyParams.password,
-        outline: 1,
-      })
-    ),
-  };
-
-  if (accessKey.listeners) {
-    result.listeners = accessKey.listeners;
-  }
-
-  return result;
+  // For WebSocket-enabled keys, the dynamic access configuration as a JSON object.
+  // This can be converted to YAML and hosted on a censorship-resistant platform.
+  // Compatible with Outline Client v1.15.0+.
+  dynamicConfig?: Record<string, unknown>;
 }
 
 // Type to reflect that we receive untyped JSON request parameters.
@@ -290,6 +267,73 @@ export class ShadowsocksManagerService {
     private readonly caddyServer?: OutlineCaddyController
   ) {}
 
+  // Creates an AccessKey API response JSON object.
+  // For WebSocket-enabled keys, includes the dynamicConfig object.
+  private accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
+    const result: AccessKeyJson = {
+      id: accessKey.id,
+      name: accessKey.name,
+      password: accessKey.proxyParams.password,
+      port: accessKey.proxyParams.portNumber,
+      method: accessKey.proxyParams.encryptionMethod,
+      dataLimit: accessKey.dataLimit,
+      accessUrl: SIP002_URI.stringify(
+        makeConfig({
+          host: accessKey.proxyParams.hostname,
+          port: accessKey.proxyParams.portNumber,
+          method: accessKey.proxyParams.encryptionMethod,
+          password: accessKey.proxyParams.password,
+          outline: 1,
+        })
+      ),
+    };
+
+    if (accessKey.listeners) {
+      result.listeners = accessKey.listeners;
+
+      // For WebSocket-enabled keys, include the dynamic config as a JSON object
+      const hasWebSocketListeners =
+        accessKey.listeners.includes('websocket-stream') ||
+        accessKey.listeners.includes('websocket-packet');
+
+      if (hasWebSocketListeners) {
+        const configData = this.serverConfig.data();
+        const domain = configData?.caddyWebServer?.domain || configData?.hostname;
+
+        if (domain) {
+          const listenersConfig = configData?.listenersForNewAccessKeys;
+
+          // Cast to access generateDynamicAccessKeyConfig method
+          const serverWithDynamicConfig = this.shadowsocksServer as ShadowsocksServer & {
+            generateDynamicAccessKeyConfig?: (
+              proxyParams: {encryptionMethod: string; password: string},
+              domain: string,
+              tcpPath: string,
+              udpPath: string,
+              tls: boolean,
+              listeners?: ListenerType[]
+            ) => Record<string, unknown> | null;
+          };
+
+          const dynamicConfig = serverWithDynamicConfig.generateDynamicAccessKeyConfig?.(
+            accessKey.proxyParams,
+            domain,
+            listenersConfig?.websocketStream?.path || '/tcp',
+            listenersConfig?.websocketPacket?.path || '/udp',
+            configData?.caddyWebServer?.autoHttps !== false,
+            accessKey.listeners
+          );
+
+          if (dynamicConfig) {
+            result.dynamicConfig = dynamicConfig;
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
   renameServer(req: RequestType, res: ResponseType, next: restify.Next): void {
     logging.debug(`renameServer request ${JSON.stringify(req.params)}`);
     const name = req.params.name;
@@ -447,7 +491,7 @@ export class ShadowsocksManagerService {
       }
 
       // Return JSON for traditional keys
-      const accessKeyJson = accessKeyToApiJson(accessKey);
+      const accessKeyJson = this.accessKeyToApiJson(accessKey);
       logging.debug(`getAccessKey response ${JSON.stringify(accessKeyJson)}`);
       res.send(HttpSuccess.OK, accessKeyJson);
       return next();
@@ -465,7 +509,7 @@ export class ShadowsocksManagerService {
     logging.debug(`listAccessKeys request ${JSON.stringify(req.params)}`);
     const response = {accessKeys: []};
     for (const accessKey of this.accessKeys.listAccessKeys()) {
-      response.accessKeys.push(accessKeyToApiJson(accessKey));
+      response.accessKeys.push(this.accessKeyToApiJson(accessKey));
     }
     logging.debug(`listAccessKeys response ${JSON.stringify(response)}`);
     res.send(HttpSuccess.OK, response);
@@ -513,7 +557,7 @@ export class ShadowsocksManagerService {
         }
       }
 
-      const accessKeyJson = accessKeyToApiJson(
+      const accessKeyJson = this.accessKeyToApiJson(
         await this.accessKeys.createNewAccessKey({
           encryptionMethod,
           id,
