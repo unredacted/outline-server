@@ -36,11 +36,13 @@ interface AccessKeyJson {
   // Admin-controlled, editable name for this access key.
   name: string;
   // Shadowsocks-specific details and credentials.
-  password: string;
-  port: number;
-  method: string;
-  dataLimit: DataLimit;
-  accessUrl: string;
+  // These fields are only present when the key has TCP or UDP listeners.
+  // For WSS-only keys, this information is in dynamicConfig instead.
+  password?: string;
+  port?: number;
+  method?: string;
+  dataLimit?: DataLimit;
+  accessUrl?: string;
   listeners?: ListenerType[];
   // For WebSocket-enabled keys, the dynamic access configuration as a JSON object.
   // This can be converted to YAML and hosted on a censorship-resistant platform.
@@ -268,16 +270,31 @@ export class ShadowsocksManagerService {
   ) {}
 
   // Creates an AccessKey API response JSON object.
-  // For WebSocket-enabled keys, includes the dynamicConfig object.
+  // For WSS-only keys, omits SS-specific fields (password, port, method, accessUrl)
+  // since they're redundant with dynamicConfig and not functional for direct connections.
   private accessKeyToApiJson(accessKey: AccessKey): AccessKeyJson {
+    // Determine what types of listeners are enabled
+    const hasDirectListeners =
+      !accessKey.listeners ||
+      accessKey.listeners.includes('tcp') ||
+      accessKey.listeners.includes('udp');
+
+    const hasWebSocketListeners =
+      accessKey.listeners?.includes('websocket-stream') ||
+      accessKey.listeners?.includes('websocket-packet');
+
+    // Start with fields that are always present
     const result: AccessKeyJson = {
       id: accessKey.id,
       name: accessKey.name,
-      password: accessKey.proxyParams.password,
-      port: accessKey.proxyParams.portNumber,
-      method: accessKey.proxyParams.encryptionMethod,
-      dataLimit: accessKey.dataLimit,
-      accessUrl: SIP002_URI.stringify(
+    };
+
+    // Only include SS-specific fields if direct SS connections are supported
+    if (hasDirectListeners) {
+      result.password = accessKey.proxyParams.password;
+      result.port = accessKey.proxyParams.portNumber;
+      result.method = accessKey.proxyParams.encryptionMethod;
+      result.accessUrl = SIP002_URI.stringify(
         makeConfig({
           host: accessKey.proxyParams.hostname,
           port: accessKey.proxyParams.portNumber,
@@ -285,48 +302,50 @@ export class ShadowsocksManagerService {
           password: accessKey.proxyParams.password,
           outline: 1,
         })
-      ),
-    };
+      );
+    }
 
+    // dataLimit applies regardless of transport type
+    if (accessKey.dataLimit) {
+      result.dataLimit = accessKey.dataLimit;
+    }
+
+    // Include listeners if present
     if (accessKey.listeners) {
       result.listeners = accessKey.listeners;
+    }
 
-      // For WebSocket-enabled keys, include the dynamic config as a JSON object
-      const hasWebSocketListeners =
-        accessKey.listeners.includes('websocket-stream') ||
-        accessKey.listeners.includes('websocket-packet');
+    // For WebSocket-enabled keys, include the dynamic config as a JSON object
+    if (hasWebSocketListeners) {
+      const configData = this.serverConfig.data();
+      const domain = configData?.caddyWebServer?.domain || configData?.hostname;
 
-      if (hasWebSocketListeners) {
-        const configData = this.serverConfig.data();
-        const domain = configData?.caddyWebServer?.domain || configData?.hostname;
+      if (domain) {
+        const listenersConfig = configData?.listenersForNewAccessKeys;
 
-        if (domain) {
-          const listenersConfig = configData?.listenersForNewAccessKeys;
+        // Cast to access generateDynamicAccessKeyConfig method
+        const serverWithDynamicConfig = this.shadowsocksServer as ShadowsocksServer & {
+          generateDynamicAccessKeyConfig?: (
+            proxyParams: {encryptionMethod: string; password: string},
+            domain: string,
+            tcpPath: string,
+            udpPath: string,
+            tls: boolean,
+            listeners?: ListenerType[]
+          ) => Record<string, unknown> | null;
+        };
 
-          // Cast to access generateDynamicAccessKeyConfig method
-          const serverWithDynamicConfig = this.shadowsocksServer as ShadowsocksServer & {
-            generateDynamicAccessKeyConfig?: (
-              proxyParams: {encryptionMethod: string; password: string},
-              domain: string,
-              tcpPath: string,
-              udpPath: string,
-              tls: boolean,
-              listeners?: ListenerType[]
-            ) => Record<string, unknown> | null;
-          };
+        const dynamicConfig = serverWithDynamicConfig.generateDynamicAccessKeyConfig?.(
+          accessKey.proxyParams,
+          domain,
+          listenersConfig?.websocketStream?.path || '/tcp',
+          listenersConfig?.websocketPacket?.path || '/udp',
+          configData?.caddyWebServer?.autoHttps !== false,
+          accessKey.listeners
+        );
 
-          const dynamicConfig = serverWithDynamicConfig.generateDynamicAccessKeyConfig?.(
-            accessKey.proxyParams,
-            domain,
-            listenersConfig?.websocketStream?.path || '/tcp',
-            listenersConfig?.websocketPacket?.path || '/udp',
-            configData?.caddyWebServer?.autoHttps !== false,
-            accessKey.listeners
-          );
-
-          if (dynamicConfig) {
-            result.dynamicConfig = dynamicConfig;
-          }
+        if (dynamicConfig) {
+          result.dynamicConfig = dynamicConfig;
         }
       }
     }

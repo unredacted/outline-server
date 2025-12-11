@@ -771,27 +771,45 @@ components:
       properties:
         id:
           type: string
+          description: Unique identifier for this access key.
         name:
           type: string
+          description: User-assigned name for this access key.
         password:
           type: string
+          description: |
+            Shadowsocks password. Only present when the key has TCP or UDP listeners.
+            For WebSocket-only keys, the secret is in dynamicConfig.
         port:
           type: integer
+          description: |
+            Port number for direct Shadowsocks connections. Only present when the 
+            key has TCP or UDP listeners.
         method:
           type: string
+          description: |
+            Encryption method (cipher). Only present when the key has TCP or UDP listeners.
+            For WebSocket-only keys, the cipher is in dynamicConfig.
+        dataLimit:
+          $ref: "#/components/schemas/DataLimit"
+          description: Optional data transfer limit for this key.
         accessUrl:
           type: string
+          description: |
+            SIP002-formatted ss:// URL for direct Shadowsocks connections.
+            Only present when the key has TCP or UDP listeners enabled.
+            For WebSocket-only keys, use dynamicConfig instead.
         listeners:
           type: array
           items:
             type: string
             enum: ['tcp', 'udp', 'websocket-stream', 'websocket-packet']
+          description: List of enabled listener types for this key.
         dynamicConfig:
           type: object
           description: |
-            For WebSocket-enabled keys (requires Outline Client v1.15.0+), contains the 
-            dynamic access configuration as a JSON object. This should be converted to YAML
-            and hosted on a censorship-resistant platform (e.g., S3, Google Drive) for 
-            distribution via ssconf:// URLs. Only present when the key has websocket-stream 
-            or websocket-packet listeners and the server has a configured domain.
+            Dynamic access configuration for WebSocket transport (Outline Client v1.15.0+).
+            Only present when the key has websocket-stream or websocket-packet listeners.
+            Contains the complete transport configuration including cipher and secret.
           additionalProperties: true
+
