@@ -294,6 +294,7 @@ export class ShadowsocksManagerService {
       result.password = accessKey.proxyParams.password;
       result.port = accessKey.proxyParams.portNumber;
       result.method = accessKey.proxyParams.encryptionMethod;
+      result.dataLimit = accessKey.dataLimit;
       result.accessUrl = SIP002_URI.stringify(
         makeConfig({
           host: accessKey.proxyParams.hostname,
@@ -303,10 +304,8 @@ export class ShadowsocksManagerService {
           outline: 1,
         })
       );
-    }
-
-    // dataLimit applies regardless of transport type
-    if (accessKey.dataLimit) {
+    } else if (accessKey.dataLimit) {
+      // For WSS-only keys, include dataLimit only when set (limits still apply server-side)
       result.dataLimit = accessKey.dataLimit;
     }
 
