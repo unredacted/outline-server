@@ -160,12 +160,33 @@ The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improve
      $API_URL/access-keys
    ```
 
-4. **Get Dynamic Client Configuration:**
+4. **Retrieve WebSocket Access Key Configuration:**
 
-   For WebSocket-enabled keys, retrieve the YAML configuration:
+   For WebSocket-enabled keys, `GET /access-keys/{id}` returns YAML configuration (Outline Client v1.15.0+):
 
    ```sh
-   curl --insecure $API_URL/access-keys/0/dynamic-config
+   curl --insecure $API_URL/access-keys/0
+   ```
+
+   Example response (`Content-Type: text/yaml`):
+
+   ```yaml
+   transport:
+     $type: tcpudp
+     tcp:
+       $type: shadowsocks
+       endpoint:
+         $type: websocket
+         url: wss://example.com/tcp
+       cipher: chacha20-ietf-poly1305
+       secret: XxXxXx
+     udp:
+       $type: shadowsocks
+       endpoint:
+         $type: websocket
+         url: wss://example.com/udp
+       cipher: chacha20-ietf-poly1305
+       secret: XxXxXx
    ```
 
 ### Listener Types

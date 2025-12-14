@@ -443,7 +443,7 @@ export class ShadowsocksManagerService {
     next();
   }
 
-  // Get a access key
+  // Get an access key
   getAccessKey(req: RequestType, res: ResponseType, next: restify.Next): void {
     try {
       logging.debug(`getAccessKey request ${JSON.stringify(req.params)}`);
@@ -508,7 +508,7 @@ export class ShadowsocksManagerService {
         }
       }
 
-      // Return JSON for traditional keys
+      // Return JSON for traditional (non-WebSocket) keys
       const accessKeyJson = this.accessKeyToApiJson(accessKey);
       logging.debug(`getAccessKey response ${JSON.stringify(accessKeyJson)}`);
       res.send(HttpSuccess.OK, accessKeyJson);
