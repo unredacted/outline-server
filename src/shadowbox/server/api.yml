@@ -135,7 +135,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CaddyWebServerConfig"
+              $ref: "#/components/schemas/WebServerConfig"
             examples:
               'Enable with auto HTTPS':
                 value: '{"enabled": true, "autoHttps": true, "email": "admin@example.com", "domain": "example.com"}'
@@ -730,7 +730,7 @@ components:
           $ref: "#/components/schemas/ListenerConfig"
           description: WebSocket packet (UDP) listener configuration
     
-    CaddyWebServerConfig:
+    WebServerConfig:
       properties:
         enabled:
           type: boolean

@@ -10,6 +10,10 @@ require (
     github.com/google/addlicense v1.1.1
 )
 
+tool (
+    github.com/caddyserver/xcaddy/cmd/xcaddy
+)
+
 require (
 	github.com/Jigsaw-Code/outline-sdk v0.0.18-0.20241106233708-faffebb12629 // indirect
 	github.com/Jigsaw-Code/outline-sdk/x v0.0.2-0.20250304133713-52f1a365e5ed // indirect

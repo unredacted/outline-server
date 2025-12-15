@@ -25,7 +25,7 @@ import * as errors from '../model/errors';
 import * as version from './version';
 
 import {ManagerMetrics} from './manager_metrics';
-import {ServerConfigJson, ListenersForNewAccessKeys, CaddyWebServerConfig} from './server_config';
+import {ServerConfigJson, ListenersForNewAccessKeys, WebServerConfig} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
 import type {OutlineCaddyController} from './outline_caddy_server';
@@ -851,7 +851,7 @@ export class ShadowsocksManagerService {
     try {
       logging.debug(`configureCaddyWebServer request ${JSON.stringify(req.params)}`);
 
-      const config = req.params as unknown as CaddyWebServerConfig;
+      const config = req.params as unknown as WebServerConfig;
       if (!config || typeof config !== 'object') {
         return next(
           new restifyErrors.InvalidArgumentError({statusCode: 400}, 'Invalid Caddy configuration')
@@ -892,7 +892,7 @@ export class ShadowsocksManagerService {
       // Store Caddy configuration
       const configData = this.serverConfig.data();
       if (configData) {
-        const caddyConfig: CaddyWebServerConfig = {
+        const caddyConfig: WebServerConfig = {
           enabled: config.enabled ?? false,
           autoHttps: config.autoHttps ?? false,
           email: config.email,

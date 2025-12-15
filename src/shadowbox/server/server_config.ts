@@ -32,7 +32,7 @@ export interface ListenersForNewAccessKeys {
 }
 
 // Caddy web server configuration
-export interface CaddyWebServerConfig {
+export interface WebServerConfig {
   enabled?: boolean;
   autoHttps?: boolean;
   email?: string; // For ACME
@@ -56,7 +56,7 @@ export interface ServerConfigJson {
   // Listeners configuration for new access keys (supersedes portForNewAccessKeys)
   listenersForNewAccessKeys?: ListenersForNewAccessKeys;
   // Caddy web server configuration for automatic HTTPS
-  caddyWebServer?: CaddyWebServerConfig;
+  caddyWebServer?: WebServerConfig;
   // Which staged rollouts we should force enabled or disabled.
   rollouts?: RolloutConfigJson[];
   // We don't serialize the shadowbox version, this is obtained dynamically from node.

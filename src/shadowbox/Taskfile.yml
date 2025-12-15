@@ -18,31 +18,17 @@ requires:
   vars: [OUTPUT_BASE]
 
 tasks:
-  download_xcaddy:
-    desc: Download xcaddy
-    requires: {vars: [TARGET_DIR, XCADDY_OS, XCADDY_ARCH]}
-    vars:
-      XCADDY_VERSION: v0.4.5
-      XCADDY_VERSION_NUMBER: '{{trimPrefix "v" .XCADDY_VERSION}}'
-      XCADDY_ARCH_LABEL: '{{if eq .XCADDY_ARCH "x86_64"}}amd64{{else if eq .XCADDY_ARCH "arm64"}}arm64{{else if eq .XCADDY_ARCH "armv6"}}armv6{{else if eq .XCADDY_ARCH "armv7"}}armv7{{else}}{{.XCADDY_ARCH}}{{end}}'
-      XCADDY_OS_LABEL: '{{if eq .XCADDY_OS "darwin"}}mac{{else}}{{.XCADDY_OS}}{{end}}'
-      XCADDY_FILE: 'xcaddy_{{.XCADDY_VERSION_NUMBER}}_{{.XCADDY_OS_LABEL}}_{{.XCADDY_ARCH_LABEL}}{{if eq .XCADDY_OS_LABEL "windows"}}.zip{{else}}.tar.gz{{end}}'
-      XCADDY_URL: 'https://github.com/caddyserver/xcaddy/releases/download/{{.XCADDY_VERSION}}/{{.XCADDY_FILE}}'
+  build_outline_caddy:
+    desc: Build the OutlineCaddy binary using xcaddy
+    requires: {vars: [TARGET_DIR, TARGET_OS, GOARCH]}
     cmds:
       - mkdir -p '{{.TARGET_DIR}}'
       - |
-        tmpdir=$(mktemp -d)
-        curl -fsSL '{{.XCADDY_URL}}' -o "$tmpdir/xcaddy.pkg"
-        {{- if eq .XCADDY_OS "windows" }}
-        unzip -oq "$tmpdir/xcaddy.pkg" -d '{{.TARGET_DIR}}'
-        {{- else }}
-        tar -xzf "$tmpdir/xcaddy.pkg" -C '{{.TARGET_DIR}}' xcaddy
-        {{- end }}
-        rm -rf "$tmpdir"
-      - |
-        {{- if ne .XCADDY_OS_LABEL "windows" -}}
-        chmod +x '{{joinPath .TARGET_DIR "xcaddy"}}'
-        {{- end -}}
+        XCADDY_GOOS={{.TARGET_OS}} XCADDY_GOARCH={{.GOARCH}} go tool xcaddy build \
+          --output '{{joinPath .TARGET_DIR "outline-caddy"}}' \
+          --with github.com/Jigsaw-Code/outline-ss-server/outlinecaddy@v0.0.1 \
+          --with github.com/iamd3vil/caddy_yaml_adapter \
+          --with github.com/mholt/caddy-l4
 
   build:
     desc: Build the Outline Server Node.js app
@@ -66,16 +52,11 @@ tasks:
         vars: {TARGET_DIR: '{{.BIN_DIR}}'}
       # Set CGO_ENABLED=0 to force static linkage. See https://mt165.co.uk/blog/static-link-go/.
       - GOOS={{.TARGET_OS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -ldflags='-s -w -X main.version=embedded' -o '{{.BIN_DIR}}/' github.com/Jigsaw-Code/outline-ss-server/cmd/outline-ss-server
-      - task: download_xcaddy
+      - task: build_outline_caddy
         vars:
           TARGET_DIR: '{{.BIN_DIR}}'
-          XCADDY_OS: '{{.TARGET_OS}}'
-          XCADDY_ARCH: '{{.GOARCH}}'
-      - |
-        '{{joinPath .BIN_DIR "xcaddy"}}' build --output '{{joinPath .BIN_DIR "outline-caddy"}}' \
-          --with github.com/Jigsaw-Code/outline-ss-server/outlinecaddy@v0.0.1 \
-          --with github.com/iamd3vil/caddy_yaml_adapter@v0.0.0-20200503183711-d479c29b475a \
-          --with github.com/mholt/caddy-l4@v0.0.0-20251201210923-0c96591f5650
+          TARGET_OS: '{{.TARGET_OS}}'
+          GOARCH: '{{.GOARCH}}'
 
   start:
     desc: Run the Outline server locally
