@@ -37,10 +37,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Clone Repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Node
-        uses: actions/setup-node@v2.2.0
+        uses: actions/setup-node@v6.1.0
         with:
           node-version: 18
           cache: npm
@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: Ensure Commitizen Format
-        uses: JulienKode/pull-request-name-linter-action@98794a8b815ec05560813c42e55fd8d32d3fd248
+        uses: JulienKode/pull-request-name-linter-action@v20.1.0
 
   size_label:
     name: Change Size Label
