@@ -170,7 +170,7 @@ async function main() {
   );
 
   // Configure listener defaults (e.g., WebSocket paths/ports) based on server configuration.
-  const listenersConfig = serverConfig.data().listenersForNewAccessKeys;
+  const listenersConfig = serverConfig.data().listeners;
   shadowsocksServer.configureListeners(
     listenersConfig
       ? {
@@ -239,7 +239,7 @@ async function main() {
   try {
     await caddyServer.applyConfig({
       accessKeys: accessKeyRepository.listAccessKeys(),
-      listeners: serverConfig.data().listenersForNewAccessKeys,
+      listeners: serverConfig.data().listeners,
       caddyConfig: serverConfig.data().caddyWebServer,
       hostname: serverConfig.data().hostname,
       apiPort: apiProxyEnabled ? apiPortNumber : undefined,

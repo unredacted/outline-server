@@ -21,11 +21,11 @@ import * as yaml from 'js-yaml';
 import * as file from '../infrastructure/file';
 import * as logging from '../infrastructure/logging';
 import {AccessKey, ListenerType} from '../model/access_key';
-import {WebServerConfig, ListenerConfig, ListenersForNewAccessKeys} from './server_config';
+import {WebServerConfig, ListenerConfig, ListenersConfig} from './server_config';
 
 export interface OutlineCaddyConfigPayload {
   accessKeys: AccessKey[];
-  listeners?: ListenersForNewAccessKeys;
+  listeners?: ListenersConfig;
   caddyConfig?: WebServerConfig;
   hostname?: string;
   apiPort?: number; // Internal API port for reverse proxy

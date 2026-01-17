@@ -24,7 +24,7 @@ export interface ListenerConfig {
   webServerPort?: number;
 }
 
-export interface ListenersForNewAccessKeys {
+export interface ListenersConfig {
   tcp?: ListenerConfig;
   udp?: ListenerConfig;
   websocketStream?: ListenerConfig;
@@ -53,8 +53,8 @@ export interface ServerConfigJson {
   createdTimestampMs?: number;
   // What port number should we use for new access keys?
   portForNewAccessKeys?: number;
-  // Listeners configuration for new access keys (supersedes portForNewAccessKeys)
-  listenersForNewAccessKeys?: ListenersForNewAccessKeys;
+  // Listeners configuration for access keys
+  listeners?: ListenersConfig;
   // Caddy web server configuration for automatic HTTPS
   caddyWebServer?: WebServerConfig;
   // Which staged rollouts we should force enabled or disabled.

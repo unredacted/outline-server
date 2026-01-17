@@ -99,24 +99,36 @@ paths:
         '409':
           description: The requested port was already in use by another service.
 
-  /server/listeners-for-new-access-keys:
+  /server/listeners:
     put:
-      description: Sets the listeners configuration for newly created access keys. Supports different ports for TCP and UDP, and WebSocket paths.
+      description: |
+        Sets the listeners configuration for access keys.
+        - By default, only affects newly created keys
+        - Set `applyToExisting: true` to also update all existing keys
+        
+        Use PUT /access-keys/{id}/listeners for per-key overrides.
       tags:
-        - Access Key
+        - Server
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ListenersConfig"
+              allOf:
+                - $ref: "#/components/schemas/ListenersConfig"
+                - type: object
+                  properties:
+                    applyToExisting:
+                      type: boolean
+                      default: false
+                      description: If true, also update all existing access keys
             examples:
-              'Basic TCP/UDP':
+              'Defaults only':
                 value: '{"tcp": {"port": 443}, "udp": {"port": 443}}'
               'With WebSocket':
-                value: '{"tcp": {"port": 443}, "udp": {"port": 443}, "websocketStream": {"path": "/tcp", "webServerPort": 8080}, "websocketPacket": {"path": "/udp", "webServerPort": 8080}}'
-              'Different TCP/UDP ports':
-                value: '{"tcp": {"port": 443}, "udp": {"port": 8443}}'
+                value: '{"tcp": {"port": 443}, "websocketStream": {"path": "/tcp", "webServerPort": 8080}, "websocketPacket": {"path": "/udp", "webServerPort": 8080}}'
+              'Update all existing keys':
+                value: '{"tcp": {"port": 443}, "websocketStream": {"path": "/tcp"}, "applyToExisting": true}'
       responses:
         '204':
           description: The listeners configuration was successfully updated.
@@ -421,7 +433,7 @@ paths:
                   value: >-
                     {"id":"my-identifier","name":"First","password":"XxXxXx","port":9795,"method":"chacha20-ietf-poly1305","accessUrl":"ss://SADFJSKADFJAKSD@0.0.0.0:9795/?outline=1"}
     get:
-      description: Get an access key
+      description: Get an access key (always returns JSON)
       tags:
         - Access Key
       parameters:
@@ -433,10 +445,7 @@ paths:
             type: string
       responses:
         '200':
-          description: |
-            The access key. Response format depends on key type:
-            - Traditional keys (TCP/UDP only): JSON with AccessKey schema
-            - WebSocket-enabled keys: YAML with dynamic transport configuration
+          description: The access key
           content:
             application/json:
               schema:
@@ -444,28 +453,8 @@ paths:
               examples:
                 'Traditional key':
                   value: '{"id":"0","name":"Admin","password":"XxXxXx","port":18162,"method":"chacha20-ietf-poly1305","accessUrl":"ss://SADFJSKADFJAKSD@0.0.0.0:18162/?outline=1"}'
-            text/yaml:
-              schema:
-                type: string
-              examples:
-                'WebSocket-enabled key':
-                  value: |
-                    transport:
-                      $type: tcpudp
-                      tcp:
-                        $type: shadowsocks
-                        endpoint:
-                          $type: websocket
-                          url: wss://example.com/tcp
-                        cipher: chacha20-ietf-poly1305
-                        secret: XxXxXx
-                      udp:
-                        $type: shadowsocks
-                        endpoint:
-                          $type: websocket
-                          url: wss://example.com/udp
-                        cipher: chacha20-ietf-poly1305
-                        secret: XxXxXx
+                'WebSocket key':
+                  value: '{"id":"1","name":"WSS User","listeners":["websocket-stream","websocket-packet"],"dynamicConfig":{"transport":{"$type":"tcpudp"}}}'
         '404':
           description: Access key inexistent
           content:
@@ -540,6 +529,91 @@ paths:
           description: Access key renamed successfully
         '404':
           description: Access key inexistent
+  /access-keys/{id}/listeners:
+    put:
+      description: |
+        Updates the listeners for a specific access key.
+        This overrides the global /server/listeners setting for this key.
+      tags:
+        - Access Key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the access key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - listeners
+              properties:
+                listeners:
+                  type: array
+                  items:
+                    type: string
+                    enum: ['tcp', 'udp', 'websocket-stream', 'websocket-packet']
+            examples:
+              'All transports':
+                value: '{"listeners": ["tcp", "udp", "websocket-stream", "websocket-packet"]}'
+              'WebSocket only':
+                value: '{"listeners": ["websocket-stream", "websocket-packet"]}'
+              'Traditional only':
+                value: '{"listeners": ["tcp", "udp"]}'
+      responses:
+        '204':
+          description: Listeners updated successfully
+        '400':
+          description: Invalid listeners configuration
+        '404':
+          description: Access key not found
+  /access-keys/{id}/dynamic-config:
+    get:
+      description: |
+        Returns the dynamic transport configuration for WebSocket-enabled keys.
+        Returns YAML content compatible with Outline Client v1.15.0+.
+        Returns 404 if the key has no WebSocket listeners.
+      tags:
+        - Access Key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the access key
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dynamic transport configuration in YAML format
+          content:
+            text/yaml:
+              schema:
+                type: string
+              examples:
+                'WebSocket config':
+                  value: |
+                    transport:
+                      $type: tcpudp
+                      tcp:
+                        $type: shadowsocks
+                        endpoint:
+                          $type: websocket
+                          url: wss://example.com/tcp
+                        cipher: chacha20-ietf-poly1305
+                        secret: XxXxXx
+                      udp:
+                        $type: shadowsocks
+                        endpoint:
+                          $type: websocket
+                          url: wss://example.com/udp
+                        cipher: chacha20-ietf-poly1305
+                        secret: XxXxXx
+        '404':
+          description: Access key not found or has no WebSocket listeners
   /access-keys/{id}/data-limit:
     put:
       description: Sets a data limit for the given access key

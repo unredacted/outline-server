@@ -305,6 +305,20 @@ export class ServerAccessKeyRepository implements AccessKeyRepository {
     this.enforceAccessKeyDataLimits();
   }
 
+  setAccessKeyListeners(id: AccessKeyId, listeners: ListenerType[]): void {
+    this.getAccessKey(id).listeners = listeners;
+    this.saveAccessKeys();
+    this.updateServer();
+  }
+
+  setListenersForAllKeys(listeners: ListenerType[]): void {
+    for (const accessKey of this.accessKeys) {
+      accessKey.listeners = listeners;
+    }
+    this.saveAccessKeys();
+    this.updateServer();
+  }
+
   // Compares access key usage with collected metrics, marking them as under or over limit.
   // Updates access key data usage.
   async enforceAccessKeyDataLimits() {

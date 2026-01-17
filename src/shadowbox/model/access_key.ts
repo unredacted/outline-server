@@ -90,4 +90,8 @@ export interface AccessKeyRepository {
   setAccessKeyDataLimit(id: AccessKeyId, limit: DataLimit): void;
   // Removes the custom data limit from access key `id`.
   removeAccessKeyDataLimit(id: AccessKeyId): void;
+  // Updates the listeners for access key `id`.
+  setAccessKeyListeners(id: AccessKeyId, listeners: ListenerType[]): void;
+  // Updates the listeners for all access keys.
+  setListenersForAllKeys(listeners: ListenerType[]): void;
 }

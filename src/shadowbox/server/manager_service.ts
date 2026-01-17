@@ -25,7 +25,7 @@ import * as errors from '../model/errors';
 import * as version from './version';
 
 import {ManagerMetrics} from './manager_metrics';
-import {ServerConfigJson, ListenersForNewAccessKeys, WebServerConfig} from './server_config';
+import {ServerConfigJson, ListenersConfig, WebServerConfig} from './server_config';
 import {SharedMetricsPublisher} from './shared_metrics';
 import {ShadowsocksServer} from '../model/shadowsocks_server';
 import type {OutlineCaddyController} from './outline_caddy_server';
@@ -135,10 +135,7 @@ export function bindService(
     `${apiPrefix}/server/port-for-new-access-keys`,
     service.setPortForNewAccessKeys.bind(service)
   );
-  apiServer.put(
-    `${apiPrefix}/server/listeners-for-new-access-keys`,
-    service.setListenersForNewAccessKeys.bind(service)
-  );
+  apiServer.put(`${apiPrefix}/server/listeners`, service.setListeners.bind(service));
   apiServer.put(`${apiPrefix}/server/web-server`, service.configureCaddyWebServer.bind(service));
 
   apiServer.post(`${apiPrefix}/access-keys`, service.createNewAccessKey.bind(service));
@@ -146,6 +143,14 @@ export function bindService(
   apiServer.get(`${apiPrefix}/access-keys`, service.listAccessKeys.bind(service));
 
   apiServer.get(`${apiPrefix}/access-keys/:id`, service.getAccessKey.bind(service));
+  apiServer.put(
+    `${apiPrefix}/access-keys/:id/listeners`,
+    service.setAccessKeyListeners.bind(service)
+  );
+  apiServer.get(
+    `${apiPrefix}/access-keys/:id/dynamic-config`,
+    service.getAccessKeyDynamicConfig.bind(service)
+  );
   apiServer.del(`${apiPrefix}/access-keys/:id`, service.removeAccessKey.bind(service));
   apiServer.put(`${apiPrefix}/access-keys/:id/name`, service.renameAccessKey.bind(service));
   apiServer.put(
@@ -320,7 +325,7 @@ export class ShadowsocksManagerService {
       const domain = configData?.caddyWebServer?.domain || configData?.hostname;
 
       if (domain) {
-        const listenersConfig = configData?.listenersForNewAccessKeys;
+        const listenersConfig = configData?.listeners;
 
         // Cast to access generateDynamicAccessKeyConfig method
         const serverWithDynamicConfig = this.shadowsocksServer as ShadowsocksServer & {
@@ -443,72 +448,14 @@ export class ShadowsocksManagerService {
     next();
   }
 
-  // Get an access key
+  // Get an access key (always returns JSON)
   getAccessKey(req: RequestType, res: ResponseType, next: restify.Next): void {
     try {
       logging.debug(`getAccessKey request ${JSON.stringify(req.params)}`);
       const accessKeyId = validateAccessKeyId(req.params.id);
       const accessKey = this.accessKeys.getAccessKey(accessKeyId);
 
-      // Check if this key uses WebSocket listeners
-      const hasWebSocketListeners =
-        accessKey.listeners &&
-        (accessKey.listeners.indexOf('websocket-stream') !== -1 ||
-          accessKey.listeners.indexOf('websocket-packet') !== -1);
-
-      if (hasWebSocketListeners) {
-        // Generate and return YAML for WebSocket keys
-        const configData = this.serverConfig.data();
-        const domain = configData?.caddyWebServer?.domain || configData?.hostname;
-        const listenersConfig = configData?.listenersForNewAccessKeys;
-
-        logging.debug(
-          `WebSocket key detected. Domain: ${domain}, Listeners config: ${JSON.stringify(
-            listenersConfig
-          )}`
-        );
-
-        // Generate YAML even if listenersConfig is not fully configured, using defaults
-        if (domain) {
-          const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
-            generateDynamicAccessKeyYaml?: (
-              proxyParams: {encryptionMethod: string; password: string},
-              domain: string,
-              tcpPath: string,
-              udpPath: string,
-              tls: boolean,
-              listeners?: ListenerType[]
-            ) => string | null;
-          };
-
-          const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(
-            accessKey.proxyParams,
-            domain,
-            listenersConfig?.websocketStream?.path || '/tcp',
-            listenersConfig?.websocketPacket?.path || '/udp',
-            this.serverConfig.data()?.caddyWebServer?.autoHttps !== false,
-            accessKey.listeners as ListenerType[] | undefined
-          );
-
-          if (yamlConfig) {
-            // Return raw YAML for WebSocket keys
-            const nodeResponse = res as unknown as {
-              setHeader: (name: string, value: string) => void;
-              statusCode: number;
-              write: (data: string) => void;
-              end: () => void;
-            };
-
-            nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
-            nodeResponse.statusCode = HttpSuccess.OK;
-            nodeResponse.write(yamlConfig);
-            nodeResponse.end();
-            return;
-          }
-        }
-      }
-
-      // Return JSON for traditional (non-WebSocket) keys
+      // Always return JSON - use /access-keys/{id}/dynamic-config for YAML
       const accessKeyJson = this.accessKeyToApiJson(accessKey);
       logging.debug(`getAccessKey response ${JSON.stringify(accessKeyJson)}`);
       res.send(HttpSuccess.OK, accessKeyJson);
@@ -562,7 +509,7 @@ export class ShadowsocksManagerService {
         }
       } else {
         // If no listeners specified, use default listeners based on server config
-        const serverListeners = this.serverConfig.data()?.listenersForNewAccessKeys;
+        const serverListeners = this.serverConfig.data()?.listeners;
         if (serverListeners) {
           listeners = [];
           if (serverListeners.tcp) listeners.push('tcp');
@@ -664,11 +611,11 @@ export class ShadowsocksManagerService {
       if (configData) {
         configData.portForNewAccessKeys = port;
         // Also update listeners config for backward compatibility
-        if (!configData.listenersForNewAccessKeys) {
-          configData.listenersForNewAccessKeys = {};
+        if (!configData.listeners) {
+          configData.listeners = {};
         }
-        configData.listenersForNewAccessKeys.tcp = {port};
-        configData.listenersForNewAccessKeys.udp = {port};
+        configData.listeners.tcp = {port};
+        configData.listeners.udp = {port};
       }
       this.serverConfig.write();
       await this.updateCaddyConfig();
@@ -687,16 +634,14 @@ export class ShadowsocksManagerService {
     }
   }
 
-  // Sets the listeners for new access keys
-  async setListenersForNewAccessKeys(
-    req: RequestType,
-    res: ResponseType,
-    next: restify.Next
-  ): Promise<void> {
+  // Sets the listeners configuration (defaults for new keys, optionally updates all keys)
+  async setListeners(req: RequestType, res: ResponseType, next: restify.Next): Promise<void> {
     try {
-      logging.debug(`setListenersForNewAccessKeys request ${JSON.stringify(req.params)}`);
+      logging.debug(`setListeners request ${JSON.stringify(req.params)}`);
 
-      const listeners = req.params as unknown as ListenersForNewAccessKeys;
+      const {applyToExisting, ...listeners} = req.params as unknown as ListenersConfig & {
+        applyToExisting?: boolean;
+      };
       if (!listeners || typeof listeners !== 'object') {
         return next(
           new restifyErrors.InvalidArgumentError(
@@ -807,13 +752,24 @@ export class ShadowsocksManagerService {
       // Store the listeners configuration
       const configData = this.serverConfig.data();
       if (configData) {
-        configData.listenersForNewAccessKeys = listeners;
+        configData.listeners = listeners;
 
         // Update legacy portForNewAccessKeys if TCP port is set
         if (listeners.tcp?.port) {
           configData.portForNewAccessKeys = listeners.tcp.port;
           await this.accessKeys.setPortForNewAccessKeys(listeners.tcp.port);
         }
+      }
+
+      // If applyToExisting is true, update all existing keys
+      if (applyToExisting) {
+        const derivedListeners: ListenerType[] = [];
+        if (listeners.tcp) derivedListeners.push('tcp');
+        if (listeners.udp) derivedListeners.push('udp');
+        if (listeners.websocketStream) derivedListeners.push('websocket-stream');
+        if (listeners.websocketPacket) derivedListeners.push('websocket-packet');
+
+        this.accessKeys.setListenersForAllKeys(derivedListeners);
       }
 
       // Update the underlying Shadowsocks server with the new listener defaults.
@@ -911,6 +867,119 @@ export class ShadowsocksManagerService {
     } catch (error) {
       logging.error(error);
       return next(new restifyErrors.InternalServerError(error));
+    }
+  }
+
+  // Updates listeners for a specific access key
+  async setAccessKeyListeners(
+    req: RequestType,
+    res: ResponseType,
+    next: restify.Next
+  ): Promise<void> {
+    try {
+      logging.debug(`setAccessKeyListeners request ${JSON.stringify(req.params)}`);
+      const accessKeyId = validateAccessKeyId(req.params.id);
+
+      const listenersParam = req.params.listeners as string[] | undefined;
+      if (!listenersParam || !Array.isArray(listenersParam)) {
+        return next(
+          new restifyErrors.InvalidArgumentError({statusCode: 400}, 'listeners must be an array')
+        );
+      }
+
+      const validListeners = ['tcp', 'udp', 'websocket-stream', 'websocket-packet'];
+      for (const listener of listenersParam) {
+        if (!validListeners.includes(listener)) {
+          return next(
+            new restifyErrors.InvalidArgumentError(
+              {statusCode: 400},
+              `Invalid listener type: ${listener}`
+            )
+          );
+        }
+      }
+
+      this.accessKeys.setAccessKeyListeners(accessKeyId, listenersParam as ListenerType[]);
+      await this.updateCaddyConfig();
+      res.send(HttpSuccess.NO_CONTENT);
+      return next();
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.AccessKeyNotFound) {
+        return next(new restifyErrors.NotFoundError(error.message));
+      }
+      return next(new restifyErrors.InternalServerError());
+    }
+  }
+
+  // Returns dynamic config YAML for WebSocket-enabled keys
+  getAccessKeyDynamicConfig(req: RequestType, res: ResponseType, next: restify.Next): void {
+    try {
+      logging.debug(`getAccessKeyDynamicConfig request ${JSON.stringify(req.params)}`);
+      const accessKeyId = validateAccessKeyId(req.params.id);
+      const accessKey = this.accessKeys.getAccessKey(accessKeyId);
+
+      const hasWebSocketListeners =
+        accessKey.listeners &&
+        (accessKey.listeners.includes('websocket-stream') ||
+          accessKey.listeners.includes('websocket-packet'));
+
+      if (!hasWebSocketListeners) {
+        return next(
+          new restifyErrors.NotFoundError('Access key has no WebSocket listeners configured')
+        );
+      }
+
+      const configData = this.serverConfig.data();
+      const domain = configData?.caddyWebServer?.domain || configData?.hostname;
+
+      if (!domain) {
+        return next(
+          new restifyErrors.InternalServerError('No domain configured for WebSocket URLs')
+        );
+      }
+
+      const listenersConfig = configData?.listeners;
+      const serverWithWebSocket = this.shadowsocksServer as ShadowsocksServer & {
+        generateDynamicAccessKeyYaml?: (
+          proxyParams: {encryptionMethod: string; password: string},
+          domain: string,
+          tcpPath: string,
+          udpPath: string,
+          tls: boolean,
+          listeners?: ListenerType[]
+        ) => string | null;
+      };
+
+      const yamlConfig = serverWithWebSocket.generateDynamicAccessKeyYaml?.(
+        accessKey.proxyParams,
+        domain,
+        listenersConfig?.websocketStream?.path || '/tcp',
+        listenersConfig?.websocketPacket?.path || '/udp',
+        configData?.caddyWebServer?.autoHttps !== false,
+        accessKey.listeners
+      );
+
+      if (!yamlConfig) {
+        return next(new restifyErrors.InternalServerError('Failed to generate dynamic config'));
+      }
+
+      const nodeResponse = res as unknown as {
+        setHeader: (name: string, value: string) => void;
+        statusCode: number;
+        write: (data: string) => void;
+        end: () => void;
+      };
+      nodeResponse.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+      nodeResponse.statusCode = HttpSuccess.OK;
+      nodeResponse.write(yamlConfig);
+      nodeResponse.end();
+    } catch (error) {
+      logging.error(error);
+      if (error instanceof errors.AccessKeyNotFound) {
+        return next(new restifyErrors.NotFoundError(error.message));
+      }
+      return next(error);
     }
   }
 
@@ -1134,7 +1203,7 @@ export class ShadowsocksManagerService {
       const apiPort = configData.caddyWebServer?.apiProxyPath ? apiPortNumber : undefined;
       await this.caddyServer.applyConfig({
         accessKeys: this.accessKeys.listAccessKeys(),
-        listeners: configData.listenersForNewAccessKeys,
+        listeners: configData.listeners,
         caddyConfig: configData.caddyWebServer,
         hostname: configData.hostname,
         apiPort,

@@ -121,9 +121,9 @@ The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improve
 
 ### Enabling WebSocket Support
 
-1. **Configure Listeners for New Access Keys:**
+1. **Configure Listeners:**
 
-   Set up listener configuration including WebSocket paths:
+   Set defaults for new keys (add `"applyToExisting": true` to update all existing keys):
 
    ```sh
    curl --insecure -X PUT -H "Content-Type: application/json" \
@@ -133,7 +133,7 @@ The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improve
        "websocketStream": {"path": "/tcp", "webServerPort": 8080},
        "websocketPacket": {"path": "/udp", "webServerPort": 8080}
      }' \
-     $API_URL/server/listeners-for-new-access-keys
+     $API_URL/server/listeners
    ```
 
 2. **Enable the Caddy Web Server (for automatic HTTPS):**
@@ -149,23 +149,20 @@ The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improve
      $API_URL/server/web-server
    ```
 
-3. **Create WebSocket-Enabled Access Keys:**
+3. **Update a Specific Key's Listeners:**
 
    ```sh
-   curl --insecure -X POST -H "Content-Type: application/json" \
-     -d '{
-       "name": "WebSocket User",
-       "listeners": ["tcp", "udp", "websocket-stream", "websocket-packet"]
-     }' \
-     $API_URL/access-keys
+   curl --insecure -X PUT -H "Content-Type: application/json" \
+     -d '{"listeners": ["tcp", "udp", "websocket-stream", "websocket-packet"]}' \
+     $API_URL/access-keys/0/listeners
    ```
 
-4. **Retrieve WebSocket Access Key Configuration:**
+4. **Get Dynamic Config (YAML):**
 
-   For WebSocket-enabled keys, `GET /access-keys/{id}` returns YAML configuration (Outline Client v1.15.0+):
+   Use the dedicated endpoint to retrieve YAML transport configuration (Outline Client v1.15.0+):
 
    ```sh
-   curl --insecure $API_URL/access-keys/0
+   curl --insecure $API_URL/access-keys/0/dynamic-config
    ```
 
    Example response (`Content-Type: text/yaml`):
@@ -188,6 +185,8 @@ The Outline Server supports Shadowsocks over WebSocket (SS over WSS) for improve
        cipher: chacha20-ietf-poly1305
        secret: XxXxXx
    ```
+
+> [!NOTE] > `GET /access-keys/{id}` always returns JSON. Use `/access-keys/{id}/dynamic-config` for YAML transport configuration.
 
 ### Listener Types
 

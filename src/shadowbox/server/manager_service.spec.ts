@@ -758,7 +758,7 @@ describe('ShadowsocksManagerService', () => {
     });
   });
 
-  describe('setListenersForNewAccessKeys', () => {
+  describe('setListeners', () => {
     it('persists configuration and updates the Shadowsocks server', async () => {
       const repo = getAccessKeyRepository();
       const serverConfig = new InMemoryConfig({} as ServerConfigJson);
@@ -785,9 +785,9 @@ describe('ShadowsocksManagerService', () => {
         },
       };
 
-      await service.setListenersForNewAccessKeys({params: listeners}, res, () => {});
+      await service.setListeners({params: listeners}, res, () => {});
 
-      expect(serverConfig.data().listenersForNewAccessKeys).toEqual(listeners);
+      expect(serverConfig.data().listeners).toEqual(listeners);
       expect(fakeServer.getListenerSettings()).toEqual({
         websocketStream: listeners.websocketStream,
         websocketPacket: listeners.websocketPacket,
@@ -814,11 +814,7 @@ describe('ShadowsocksManagerService', () => {
         websocketStream: {path: '/tcp', webServerPort: 8080},
         websocketPacket: {path: '/udp', webServerPort: 8080},
       };
-      await service.setListenersForNewAccessKeys(
-        {params: listenersWithWebsocket},
-        {send: () => {}},
-        () => {}
-      );
+      await service.setListeners({params: listenersWithWebsocket}, {send: () => {}}, () => {});
       expect(fakeServer.getListenerSettings()).toEqual({
         websocketStream: listenersWithWebsocket.websocketStream,
         websocketPacket: listenersWithWebsocket.websocketPacket,
@@ -834,13 +830,9 @@ describe('ShadowsocksManagerService', () => {
           responseProcessed = true;
         },
       };
-      await service.setListenersForNewAccessKeys(
-        {params: listenersWithoutWebsocket},
-        res,
-        () => {}
-      );
+      await service.setListeners({params: listenersWithoutWebsocket}, res, () => {});
 
-      expect(serverConfig.data().listenersForNewAccessKeys).toEqual(listenersWithoutWebsocket);
+      expect(serverConfig.data().listeners).toEqual(listenersWithoutWebsocket);
       expect(fakeServer.getListenerSettings()).toBeUndefined();
       expect(fakeCaddy.applyCalls.length).toEqual(2);
       expect(fakeCaddy.applyCalls[1].listeners).toEqual(listenersWithoutWebsocket);
