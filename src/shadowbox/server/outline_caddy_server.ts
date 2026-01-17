@@ -362,7 +362,7 @@ export class OutlineCaddyServer implements OutlineCaddyController {
           handler: 'reverse_proxy',
           upstreams: [{dial: `localhost:${apiPort}`}],
           transport: {
-            protocol: 'https',
+            protocol: 'http',
             tls: {
               insecure_skip_verify: true, // Skip verification for self-signed cert
             },
